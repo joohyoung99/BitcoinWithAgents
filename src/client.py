@@ -25,6 +25,6 @@ def get_client() -> BitgetAPI:
     client = BitgetAPI(api_key=api_key, secret_key=api_secret, api_passphrase=passphrase)
 
     if os.getenv("BITGET_IS_DEMO", "false").lower() == "true":
-        client.account.request_handler.static_headers["x-simulated-trading"] = "1"
+        client.account.request_handler.static_headers["paptrading"] = "1"
 
     return client

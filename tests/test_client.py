@@ -28,13 +28,14 @@ def test_injects_demo_header_when_is_demo_true():
         "BITGET_API_KEY": "k", "BITGET_SECRET_KEY": "s",
         "BITGET_PASSPHRASE": "p", "BITGET_IS_DEMO": "True",
     }
-    with patch.dict(os.environ, env, clear=False):
-        mock_client = MagicMock()
-        mock_client.account.request_handler.static_headers = {}
-        with patch("src.client.BitgetAPI", return_value=mock_client):
-            import src.client as m; reload(m)
-            result = m.get_client()
-        assert result.account.request_handler.static_headers.get("x-simulated-trading") == "1"
+    mock_client = MagicMock()
+    mock_client.account.request_handler.static_headers = {}
+    import src.client as m
+    with patch.dict(os.environ, env, clear=False), \
+         patch("src.client.BitgetAPI", return_value=mock_client):
+        result = m.get_client()
+    assert result is mock_client
+    assert result.account.request_handler.static_headers.get("paptrading") == "1"
 
 
 def test_no_demo_header_when_is_demo_false():
@@ -42,10 +43,11 @@ def test_no_demo_header_when_is_demo_false():
         "BITGET_API_KEY": "k", "BITGET_SECRET_KEY": "s",
         "BITGET_PASSPHRASE": "p", "BITGET_IS_DEMO": "false",
     }
-    with patch.dict(os.environ, env, clear=False):
-        mock_client = MagicMock()
-        mock_client.account.request_handler.static_headers = {}
-        with patch("src.client.BitgetAPI", return_value=mock_client):
-            import src.client as m; reload(m)
-            result = m.get_client()
-        assert "x-simulated-trading" not in result.account.request_handler.static_headers
+    mock_client = MagicMock()
+    mock_client.account.request_handler.static_headers = {}
+    import src.client as m
+    with patch.dict(os.environ, env, clear=False), \
+         patch("src.client.BitgetAPI", return_value=mock_client):
+        result = m.get_client()
+    assert result is mock_client
+    assert "paptrading" not in result.account.request_handler.static_headers
