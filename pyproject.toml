@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "bitget>=0.0.128",
-    "google>=3.0.0",
     "pytest>=9.0.3",
     "python-dotenv>=1.2.2",
 ]
