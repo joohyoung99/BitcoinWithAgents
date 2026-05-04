@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
+from bitpy.models.account import AccountListData
 from src.account import get_balance
 
 
@@ -13,8 +14,8 @@ def _make_client(code: str, data: list) -> MagicMock:
 
 
 def test_returns_parsed_balance():
-    account = MagicMock()
-    account.equity = "50000.00"
+    account = MagicMock(spec=AccountListData)
+    account.accountEquity = "50000.00"
     account.available = "49500.00"
     account.unrealizedPL = "500.00"
 
