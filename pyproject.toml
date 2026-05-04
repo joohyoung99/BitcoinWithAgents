@@ -1,0 +1,16 @@
+[project]
+name = "bitcoinwithagents"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "bitget>=0.0.128",
+    "bitget-python>=1.0.4",
+    "google>=3.0.0",
+    "pytest>=9.0.3",
+    "python-dotenv>=1.2.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
