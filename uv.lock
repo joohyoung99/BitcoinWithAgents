@@ -8,16 +8,22 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "bitget" },
-    { name = "pytest" },
     { name = "python-dotenv" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "bitget", specifier = ">=0.0.128" },
-    { name = "pytest", specifier = ">=9.0.3" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "bitget"

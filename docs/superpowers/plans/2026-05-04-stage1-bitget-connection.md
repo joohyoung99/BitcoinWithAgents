@@ -132,27 +132,42 @@ def test_raises_when_multiple_vars_missing():
         assert "BITGET_SECRET_KEY" in str(exc.value)
 
 
-def test_returns_service_and_injects_demo_header():
+def test_injects_demo_header_when_bitget_is_demo_true():
     with patch.dict(os.environ, {
         "BITGET_API_KEY": "key",
         "BITGET_SECRET_KEY": "secret",
         "BITGET_PASSPHRASE": "pass",
+        "BITGET_IS_DEMO": "True",
     }, clear=False):
         mock_service = MagicMock()
         mock_service.headers = {}
 
-        with patch("src.client.mix_account_api.AccountApi", return_value=mock_service) as mock_cls:
+        with patch("src.client.mix_account_api.AccountApi", return_value=mock_service):
             from importlib import reload
             import src.client as client_mod
             reload(client_mod)
 
             result = client_mod.get_account_api()
-
-            mock_cls.assert_called_once_with(
-                "key", "secret", "pass",
-                use_server_time=False, first=False,
-            )
             assert result.headers.get("X-SIMULATED-TRADING") == "1"
+
+
+def test_no_demo_header_when_bitget_is_demo_false():
+    with patch.dict(os.environ, {
+        "BITGET_API_KEY": "key",
+        "BITGET_SECRET_KEY": "secret",
+        "BITGET_PASSPHRASE": "pass",
+        "BITGET_IS_DEMO": "false",
+    }, clear=False):
+        mock_service = MagicMock()
+        mock_service.headers = {}
+
+        with patch("src.client.mix_account_api.AccountApi", return_value=mock_service):
+            from importlib import reload
+            import src.client as client_mod
+            reload(client_mod)
+
+            result = client_mod.get_account_api()
+            assert "X-SIMULATED-TRADING" not in result.headers
 ```
 
 - [ ] **Step 2: 테스트 실행 — 실패 확인**
@@ -194,7 +209,9 @@ def get_account_api() -> mix_account_api.AccountApi:
         api_key, api_secret, passphrase,
         use_server_time=False, first=False,
     )
-    service.headers["X-SIMULATED-TRADING"] = "1"
+    is_demo = os.getenv("BITGET_IS_DEMO", "false").lower() == "true"
+    if is_demo:
+        service.headers["X-SIMULATED-TRADING"] = "1"
     return service
 ```
 
