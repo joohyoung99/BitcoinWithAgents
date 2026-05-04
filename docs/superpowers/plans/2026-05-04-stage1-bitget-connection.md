@@ -91,7 +91,7 @@ git commit -m "chore: project scaffold for stage 1"
 - Create: `tests/test_client.py`
 - Create: `src/client.py`
 
-Bitget SDK의 `AccountApi`를 초기화하고 Demo 헤더(`X-SIMULATED-TRADING: 1`)를 주입하는 `get_account_api()` 함수를 구현한다.
+`bitpy.rest_api.BitgetAPI`를 초기화하고 `BITGET_IS_DEMO=True`일 때 Demo 헤더(`x-simulated-trading: 1`)를 주입하는 `get_client()` 함수를 TDD로 구현한다.
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
@@ -101,73 +101,56 @@ Bitget SDK의 `AccountApi`를 초기화하고 Demo 헤더(`X-SIMULATED-TRADING: 
 import os
 import pytest
 from unittest.mock import patch, MagicMock
+from importlib import reload
 
 
 def test_raises_when_api_key_missing():
-    with patch.dict(os.environ, {
-        "BITGET_API_KEY": "",
-        "BITGET_SECRET_KEY": "s",
-        "BITGET_PASSPHRASE": "p",
-    }, clear=False):
-        from importlib import reload
-        import src.client as client_mod
-        reload(client_mod)
+    env = {"BITGET_API_KEY": "", "BITGET_SECRET_KEY": "s", "BITGET_PASSPHRASE": "p"}
+    with patch.dict(os.environ, env, clear=False):
+        import src.client as m; reload(m)
         with pytest.raises(ValueError) as exc:
-            client_mod.get_account_api()
+            m.get_client()
         assert "BITGET_API_KEY" in str(exc.value)
 
 
 def test_raises_when_multiple_vars_missing():
-    with patch.dict(os.environ, {
-        "BITGET_API_KEY": "",
-        "BITGET_SECRET_KEY": "",
-        "BITGET_PASSPHRASE": "",
-    }, clear=False):
-        from importlib import reload
-        import src.client as client_mod
-        reload(client_mod)
+    env = {"BITGET_API_KEY": "", "BITGET_SECRET_KEY": "", "BITGET_PASSPHRASE": ""}
+    with patch.dict(os.environ, env, clear=False):
+        import src.client as m; reload(m)
         with pytest.raises(ValueError) as exc:
-            client_mod.get_account_api()
+            m.get_client()
         assert "BITGET_API_KEY" in str(exc.value)
         assert "BITGET_SECRET_KEY" in str(exc.value)
 
 
-def test_injects_demo_header_when_bitget_is_demo_true():
-    with patch.dict(os.environ, {
-        "BITGET_API_KEY": "key",
-        "BITGET_SECRET_KEY": "secret",
-        "BITGET_PASSPHRASE": "pass",
-        "BITGET_IS_DEMO": "True",
-    }, clear=False):
-        mock_service = MagicMock()
-        mock_service.headers = {}
-
-        with patch("src.client.mix_account_api.AccountApi", return_value=mock_service):
-            from importlib import reload
-            import src.client as client_mod
-            reload(client_mod)
-
-            result = client_mod.get_account_api()
-            assert result.headers.get("X-SIMULATED-TRADING") == "1"
+def test_injects_demo_header_when_is_demo_true():
+    env = {
+        "BITGET_API_KEY": "k", "BITGET_SECRET_KEY": "s",
+        "BITGET_PASSPHRASE": "p", "BITGET_IS_DEMO": "True",
+    }
+    mock_client = MagicMock()
+    mock_client.account.request_handler.static_headers = {}
+    import src.client as m
+    with patch.dict(os.environ, env, clear=False), \
+         patch("src.client.BitgetAPI", return_value=mock_client):
+        result = m.get_client()
+    assert result is mock_client
+    assert result.account.request_handler.static_headers.get("x-simulated-trading") == "1"
 
 
-def test_no_demo_header_when_bitget_is_demo_false():
-    with patch.dict(os.environ, {
-        "BITGET_API_KEY": "key",
-        "BITGET_SECRET_KEY": "secret",
-        "BITGET_PASSPHRASE": "pass",
-        "BITGET_IS_DEMO": "false",
-    }, clear=False):
-        mock_service = MagicMock()
-        mock_service.headers = {}
-
-        with patch("src.client.mix_account_api.AccountApi", return_value=mock_service):
-            from importlib import reload
-            import src.client as client_mod
-            reload(client_mod)
-
-            result = client_mod.get_account_api()
-            assert "X-SIMULATED-TRADING" not in result.headers
+def test_no_demo_header_when_is_demo_false():
+    env = {
+        "BITGET_API_KEY": "k", "BITGET_SECRET_KEY": "s",
+        "BITGET_PASSPHRASE": "p", "BITGET_IS_DEMO": "false",
+    }
+    mock_client = MagicMock()
+    mock_client.account.request_handler.static_headers = {}
+    import src.client as m
+    with patch.dict(os.environ, env, clear=False), \
+         patch("src.client.BitgetAPI", return_value=mock_client):
+        result = m.get_client()
+    assert result is mock_client
+    assert "x-simulated-trading" not in result.account.request_handler.static_headers
 ```
 
 - [ ] **Step 2: 테스트 실행 — 실패 확인**
@@ -176,19 +159,19 @@ def test_no_demo_header_when_bitget_is_demo_false():
 uv run pytest tests/test_client.py -v
 ```
 
-기대 출력: `ImportError` 또는 `ModuleNotFoundError` (파일이 없으므로)
+기대: `ImportError` (파일 없으므로)
 
 - [ ] **Step 3: `src/client.py` 구현**
 
 ```python
 import os
 from dotenv import load_dotenv
-import bitget.v2.mix.account_api as mix_account_api
+from bitpy.rest_api import BitgetAPI
 
 load_dotenv()
 
 
-def get_account_api() -> mix_account_api.AccountApi:
+def get_client() -> BitgetAPI:
     api_key = os.getenv("BITGET_API_KEY", "")
     api_secret = os.getenv("BITGET_SECRET_KEY", "")
     passphrase = os.getenv("BITGET_PASSPHRASE", "")
@@ -205,19 +188,13 @@ def get_account_api() -> mix_account_api.AccountApi:
     if missing:
         raise ValueError(f"Missing env vars: {', '.join(missing)}")
 
-    service = mix_account_api.AccountApi(
-        api_key, api_secret, passphrase,
-        use_server_time=False, first=False,
-    )
-    is_demo = os.getenv("BITGET_IS_DEMO", "false").lower() == "true"
-    if is_demo:
-        service.headers["X-SIMULATED-TRADING"] = "1"
-    return service
-```
+    client = BitgetAPI(api_key=api_key, secret_key=api_secret, api_passphrase=passphrase)
 
-> **주의:** `service.headers`가 없다고 오류가 나면 SDK 소스를 확인한다.  
-> `bitget/v2/mix/account_api.py` → 부모 클래스 → `self.headers` 또는 `self.client.headers`로 접근.  
-> 속성명이 다르면 해당 속성으로 교체할 것.
+    if os.getenv("BITGET_IS_DEMO", "false").lower() == "true":
+        client.account.request_handler.static_headers["x-simulated-trading"] = "1"
+
+    return client
+```
 
 - [ ] **Step 4: 테스트 실행 — 통과 확인**
 
@@ -225,18 +202,13 @@ def get_account_api() -> mix_account_api.AccountApi:
 uv run pytest tests/test_client.py -v
 ```
 
-기대 출력:
-```
-PASSED tests/test_client.py::test_raises_when_api_key_missing
-PASSED tests/test_client.py::test_raises_when_multiple_vars_missing
-PASSED tests/test_client.py::test_returns_service_and_injects_demo_header
-```
+4개 모두 PASSED여야 한다.
 
 - [ ] **Step 5: 커밋**
 
 ```bash
 git add src/client.py tests/test_client.py
-git commit -m "feat: add BitgetAccountApi client with demo header injection"
+git commit -m "feat: add get_client with bitpy SDK and BITGET_IS_DEMO demo header injection"
 ```
 
 ---
@@ -273,25 +245,25 @@ from unittest.mock import MagicMock
 from src.account import get_balance
 
 
-def _make_service(response: dict) -> MagicMock:
-    service = MagicMock()
-    service.accounts.return_value = response
-    return service
+def _make_client(code: str, data: list) -> MagicMock:
+    client = MagicMock()
+    response = MagicMock()
+    response.code = code
+    response.data = data
+    client.account.get_accounts.return_value = response
+    return client
 
 
 def test_returns_parsed_balance():
-    service = _make_service({
-        "code": "00000",
-        "data": [{
-            "equity": "50000.00",
-            "available": "49500.00",
-            "unrealizedPL": "500.00",
-        }],
-    })
+    account = MagicMock()
+    account.equity = "50000.00"
+    account.available = "49500.00"
+    account.unrealizedPL = "500.00"
 
-    result = get_balance(service)
+    client = _make_client("00000", [account])
+    result = get_balance(client)
 
-    service.accounts.assert_called_once_with({"productType": "USDT-FUTURES"})
+    client.account.get_accounts.assert_called_once_with("USDT-FUTURES")
     assert result == {
         "total": 50000.0,
         "available": 49500.0,
@@ -300,22 +272,19 @@ def test_returns_parsed_balance():
 
 
 def test_raises_on_api_error_code():
-    service = _make_service({
-        "code": "40001",
-        "msg": "Invalid apikey",
-        "data": [],
-    })
+    client = _make_client("40001", [])
+    client.account.get_accounts.return_value.msg = "Invalid apikey"
 
     with pytest.raises(RuntimeError) as exc:
-        get_balance(service)
+        get_balance(client)
     assert "40001" in str(exc.value)
 
 
 def test_raises_when_data_is_empty():
-    service = _make_service({"code": "00000", "data": []})
+    client = _make_client("00000", [])
 
     with pytest.raises(RuntimeError) as exc:
-        get_balance(service)
+        get_balance(client)
     assert "empty" in str(exc.value).lower()
 ```
 
@@ -330,26 +299,23 @@ uv run pytest tests/test_account.py -v
 - [ ] **Step 3: `src/account.py` 구현**
 
 ```python
-from bitget.v2.mix.account_api import AccountApi
+from bitpy.rest_api import BitgetAPI
 
 
-def get_balance(service: AccountApi) -> dict:
-    response = service.accounts({"productType": "USDT-FUTURES"})
+def get_balance(client: BitgetAPI) -> dict:
+    response = client.account.get_accounts("USDT-FUTURES")
 
-    code = response.get("code", "")
-    if code != "00000":
-        msg = response.get("msg", "unknown error")
-        raise RuntimeError(f"Bitget API error {code}: {msg}")
+    if response.code != "00000":
+        raise RuntimeError(f"Bitget API error {response.code}: {response.msg}")
 
-    data = response.get("data", [])
-    if not data:
+    if not response.data:
         raise RuntimeError("Bitget API returned empty data for account balance")
 
-    account = data[0]
+    account = response.data[0]
     return {
-        "total": float(account["equity"]),
-        "available": float(account["available"]),
-        "unrealized_pnl": float(account["unrealizedPL"]),
+        "total": float(account.equity),
+        "available": float(account.available),
+        "unrealized_pnl": float(account.unrealizedPL),
     }
 ```
 
