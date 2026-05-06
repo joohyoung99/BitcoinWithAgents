@@ -75,3 +75,33 @@ def test_collect_market_returns_none_on_error():
         result = collect_market()
 
     assert result is None
+
+
+def test_collect_macro_returns_data():
+    from src.explorer import collect_macro
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "observations": [
+            {"value": "5.33", "date": "2024-03-01"},
+            {"value": "5.33", "date": "2024-02-01"},
+            {"value": "5.08", "date": "2024-01-01"},
+        ]
+    }
+
+    with patch.dict(os.environ, {"FRED_API_KEY": "testkey"}), \
+         patch("src.explorer.requests.get", return_value=mock_resp):
+        result = collect_macro()
+
+    assert isinstance(result, MacroData)
+    assert result.fed_funds_rate == pytest.approx(5.33)
+    assert result.rate_trend == "hiking"
+
+
+def test_collect_macro_returns_none_when_no_key():
+    from src.explorer import collect_macro
+
+    with patch.dict(os.environ, {"FRED_API_KEY": ""}, clear=False):
+        result = collect_macro()
+
+    assert result is None

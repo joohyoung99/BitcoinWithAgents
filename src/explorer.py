@@ -88,3 +88,43 @@ def collect_market() -> MarketData | None:
     except Exception as e:
         print(f"[explorer] market collection failed: {e}")
         return None
+
+
+def collect_macro() -> MacroData | None:
+    try:
+        api_key = os.getenv("FRED_API_KEY", "")
+        if not api_key:
+            print("[explorer] FRED_API_KEY not set, skipping macro")
+            return None
+
+        resp = requests.get(
+            FRED_BASE,
+            params={
+                "series_id": "DFF",
+                "api_key": api_key,
+                "sort_order": "desc",
+                "limit": "5",
+                "file_type": "json",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        obs = [o for o in resp.json()["observations"] if o["value"] != "."]
+        if not obs:
+            return None
+
+        values = [float(o["value"]) for o in obs]
+        current = values[0]
+        if len(values) >= 2:
+            trend = (
+                "hiking" if values[0] > values[-1]
+                else "cutting" if values[0] < values[-1]
+                else "holding"
+            )
+        else:
+            trend = "holding"
+
+        return MacroData(fed_funds_rate=current, rate_trend=trend)
+    except Exception as e:
+        print(f"[explorer] macro collection failed: {e}")
+        return None
