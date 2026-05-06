@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import dotenv
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,9 @@ from src.models import (
     MacroData,
     MarketData,
 )
+
+dotenv.load_dotenv()  # Load environment variables from .env file
+
 
 FEAR_GREED_URL = "https://api.alternative.me/fng/"
 BITGET_BASE = "https://api.bitget.com"
@@ -155,7 +159,7 @@ def collect_etf() -> ETFData | None:
             timeout=10,
         )
         resp.raise_for_status()
-        flows = resp.json()["data"]["list"][:3]
+        flows = resp.json()["data"][:3]
 
         # Support both the mock field name ("netFlow") and the real API field
         # name ("total_net_inflow") so unit tests and live calls both work.

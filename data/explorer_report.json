@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-05-06T07:33:05.437345+00:00",
+  "risk": "risk-on",
+  "summary": "현재 시장은 Risk-On 상태로 판단됩니다. 연준의 금리 동결 기조와 ETF 자금의 지속적인 순유입이 2가지 Risk-On 조건을 충족시켰습니다. 비록 Fear & Greed 지수는 아직 공포 상태에 머물러 있지만, 거시 경제 및 자금 흐름이 긍정적인 신호를 보내고 있습니다.",
+  "macro": {
+    "fed_funds_rate": 3.64,
+    "rate_trend": "holding"
+  },
+  "etf": {
+    "net_flow_3d": 1032071535.7199999,
+    "flow_signal": "inflow"
+  },
+  "fear_greed": {
+    "score": 46,
+    "label": "Fear"
+  },
+  "market": {
+    "funding_rate": -0.000107,
+    "open_interest": 31302.9336,
+    "long_short_ratio": 1.0
+  }
+}

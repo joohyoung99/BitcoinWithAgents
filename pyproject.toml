@@ -8,6 +8,7 @@ dependencies = [
     "apscheduler>=3.11.2",
     "bitget-python>=1.0.4",
     "cryptography>=47.0.0",
+    "gcloud>=0.18.3",
     "google-genai>=1.75.0",
     "pandas>=2.3.3",
     "pandas-ta>=0.4.71b0",
