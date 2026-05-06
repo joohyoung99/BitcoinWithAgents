@@ -118,3 +118,50 @@ def determine_entry(df: pd.DataFrame, trend_range: str, risk: str) -> str:
     if close <= bbl:
         return "long"
     return "none"
+
+
+_SCORE_PROMPT_TEMPLATE = """\
+You are a BTC/USDT futures trading signal validator.
+Evaluate the rule-based signal and return a JSON confidence score.
+
+## Signal
+- entry_signal: {signal}
+- trend_range: {trend_range}
+
+## Last 10 Candles (oldest→newest)
+{candles_json}
+
+## Instructions
+- Score how well the market data supports the signal (0=strongly against, 100=strongly supports).
+- Return ONLY valid JSON, no markdown, no explanation outside JSON.
+
+## Output Schema (strict)
+{{"confidence": <integer 0-100>, "comment": "<one sentence in Korean>"}}
+"""
+
+
+def score_signal(df: pd.DataFrame, signal: str, trend_range: str) -> tuple[int, str]:
+    try:
+        cols = ["close", "EMA_20", "EMA_50", "EMA_200", "ADX_14", "RSI_14", "ATRr_14"]
+        available = [c for c in cols if c in df.columns]
+        last10 = df[available].tail(10).round(4).to_dict(orient="records")
+        prompt = _SCORE_PROMPT_TEMPLATE.format(
+            signal=signal,
+            trend_range=trend_range,
+            candles_json=json.dumps(last10, ensure_ascii=False),
+        )
+        client = genai.Client()
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        text = response.text.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.rsplit("```", 1)[0]
+        parsed = json.loads(text.strip())
+        return int(parsed["confidence"]), str(parsed["comment"])
+    except Exception:
+        return 50, "LLM unavailable"

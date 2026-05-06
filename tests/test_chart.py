@@ -154,3 +154,28 @@ def test_determine_entry_caution_bb_long():
     df = df.copy()
     df["close"] = 88.0
     assert determine_entry(df, "range", "risk-on") == "long"
+
+
+def test_score_signal_returns_confidence_and_comment():
+    from src.chart import score_signal
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.text = '{"confidence": 75, "comment": "Strong uptrend"}'
+    mock_client.models.generate_content.return_value = mock_response
+
+    with patch("src.chart.genai.Client", return_value=mock_client):
+        confidence, comment = score_signal(_make_ohlcv(300), "long", "trend")
+
+    assert confidence == 75
+    assert "uptrend" in comment.lower()
+
+
+def test_score_signal_fallback_on_gemini_fail():
+    from src.chart import score_signal
+
+    with patch("src.chart.genai.Client", side_effect=Exception("API error")):
+        confidence, comment = score_signal(_make_ohlcv(300), "long", "trend")
+
+    assert confidence == 50
+    assert comment == "LLM unavailable"
