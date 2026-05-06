@@ -35,3 +35,18 @@ class ExplorerReport:
     etf: ETFData | None
     fear_greed: FearGreedData | None
     market: MarketData | None
+
+
+@dataclass
+class ChartSignal:
+    symbol: str
+    updated_at: str
+    trend_range: str        # "trend" | "range"
+    adx: float
+    rsi: float
+    ema_aligned: bool       # EMA20 > EMA50 > EMA200
+    ema50_slope: float      # positive=up, negative=down
+    atr: float
+    entry_signal: str       # "long" | "short" | "none"
+    confidence: int         # 0–100
+    signal_summary: str
