@@ -111,7 +111,9 @@ def analyse(
 ```
 
 - `google-genai` SDK, `gemini-2.5-pro` 모델
-- `GEMINI_API_KEY` 환경변수 사용
+- **ADC (Application Default Credentials)** 인증 — `api_key` 없이 `genai.Client()` 초기화
+  - 로컬: `gcloud auth application-default login`
+  - 서버: `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json` 환경변수
 - 프롬프트에 수집된 데이터 전달 (None인 항목은 "수집 실패"로 표시)
 - Risk-On 조건 (Voting — 2개 이상 충족):
   - Fear & Greed > 60
@@ -171,7 +173,9 @@ def main():
 ```
 FRED_API_KEY=
 SOSOVALUE_API_KEY=
-GEMINI_API_KEY=
+# Gemini: API KEY 없이 ADC 인증 사용
+# 로컬 → gcloud auth application-default login
+# 서버 → GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 ```
 
 ---
