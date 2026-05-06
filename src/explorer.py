@@ -306,3 +306,19 @@ def run_once() -> None:
         print(f"[explorer] {report.timestamp} risk={report.risk}")
     except Exception as e:
         print(f"[explorer] run_once unexpected error: {e}")
+
+
+def main() -> None:
+    from apscheduler.schedulers.blocking import BlockingScheduler
+
+    print("[explorer] starting — running once immediately")
+    run_once()
+
+    scheduler = BlockingScheduler()
+    scheduler.add_job(run_once, "interval", hours=1)
+    print("[explorer] scheduler started — runs every 1 hour (Ctrl+C to stop)")
+    scheduler.start()
+
+
+if __name__ == "__main__":
+    main()
