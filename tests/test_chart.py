@@ -43,3 +43,40 @@ def test_fetch_candles_returns_dataframe():
     assert list(df.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
     assert df["timestamp"].iloc[0] < df["timestamp"].iloc[-1]
     assert df["close"].dtype == float
+
+
+def _make_ohlcv(n: int = 300) -> pd.DataFrame:
+    import numpy as np
+    rng = np.random.default_rng(42)
+    close = 50000 + rng.normal(0, 200, n).cumsum()
+    df = pd.DataFrame({
+        "timestamp": range(n),
+        "open": close - 50,
+        "high": close + 100,
+        "low": close - 100,
+        "close": close,
+        "volume": rng.uniform(100, 500, n),
+    })
+    return df
+
+
+def test_calc_indicators_adds_columns():
+    from src.chart import calc_indicators
+
+    df = calc_indicators(_make_ohlcv(300))
+
+    for col in ["EMA_20", "EMA_50", "EMA_200", "ADX_14", "RSI_14", "ATRr_14", "OBV"]:
+        assert col in df.columns, f"missing column: {col}"
+    assert "ema50_slope" in df.columns
+    assert len(df) > 0
+    assert not df["EMA_20"].isna().any()
+
+
+def test_calc_indicators_ema50_slope_uses_iloc():
+    from src.chart import calc_indicators
+
+    df = calc_indicators(_make_ohlcv(300))
+    # slope = (ema50[-1] - ema50[-4]) / ema50[-4]
+    ema50 = df["EMA_50"]
+    expected = (ema50.iloc[-1] - ema50.iloc[-4]) / ema50.iloc[-4]
+    assert abs(df["ema50_slope"].iloc[-1] - expected) < 1e-10

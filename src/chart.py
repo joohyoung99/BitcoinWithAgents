@@ -48,3 +48,24 @@ def fetch_candles(interval: str = "15min", limit: int = 500) -> pd.DataFrame:
     df = df.iloc[:-1]  # drop incomplete last candle
     df = df.reset_index(drop=True)
     return df
+
+
+def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.ta.ema(length=20, append=True)   # → EMA_20
+    df.ta.ema(length=50, append=True)   # → EMA_50
+    df.ta.ema(length=200, append=True)  # → EMA_200
+    df.ta.adx(length=14, append=True)   # → ADX_14, DMP_14, DMN_14
+    df.ta.rsi(length=14, append=True)   # → RSI_14
+    df.ta.macd(fast=12, slow=26, signal=9, append=True)
+    df.ta.bbands(length=20, std=2, append=True)
+    df.ta.atr(length=14, append=True)   # → ATRr_14
+    df.ta.obv(append=True)              # → OBV
+
+    df = df.dropna().reset_index(drop=True)
+
+    # EMA50 slope: 3-candle rate of change via safe iloc indexing
+    ema50 = df["EMA_50"]
+    df["ema50_slope"] = (ema50.iloc[-1] - ema50.iloc[-4]) / ema50.iloc[-4]
+
+    return df
