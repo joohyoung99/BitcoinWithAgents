@@ -24,3 +24,22 @@ def test_chart_signal_dataclass():
     assert sig.symbol == "BTCUSDT"
     assert sig.entry_signal == "long"
     assert sig.confidence == 78
+
+
+def test_fetch_candles_returns_dataframe():
+    from src.chart import fetch_candles
+
+    rows = [
+        [str(1000 + i), "50000", "50100", "49900", "50050", "10", "500000"]
+        for i in range(10, 0, -1)
+    ]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": rows}
+
+    with patch("src.chart.requests.get", return_value=mock_resp):
+        df = fetch_candles()
+
+    assert len(df) == 9
+    assert list(df.columns) == ["timestamp", "open", "high", "low", "close", "volume"]
+    assert df["timestamp"].iloc[0] < df["timestamp"].iloc[-1]
+    assert df["close"].dtype == float
