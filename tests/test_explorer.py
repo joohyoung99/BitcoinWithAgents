@@ -149,3 +149,42 @@ def test_collect_etf_returns_none_when_no_key():
         result = collect_etf()
 
     assert result is None
+
+
+def test_analyse_returns_risk_on():
+    from src.explorer import analyse
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.text = '{"risk": "risk-on", "summary": "시장 상태 양호"}'
+    mock_client.models.generate_content.return_value = mock_response
+
+    fg = FearGreedData(score=70, label="Greed")
+    market = MarketData(funding_rate=0.005, open_interest=1e9, long_short_ratio=1.2)
+
+    with patch("src.explorer.genai.Client", return_value=mock_client):
+        report = analyse(None, None, fg, market)
+
+    assert report.risk == "risk-on"
+    assert report.summary == "시장 상태 양호"
+    assert report.fear_greed is fg
+    assert report.market is market
+    assert report.macro is None
+
+
+def test_analyse_returns_risk_off():
+    from src.explorer import analyse
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.text = '{"risk": "risk-off", "summary": "위험 신호 감지"}'
+    mock_client.models.generate_content.return_value = mock_response
+
+    fg = FearGreedData(score=20, label="Extreme Fear")
+    market = MarketData(funding_rate=-0.06, open_interest=8e8, long_short_ratio=0.8)
+
+    with patch("src.explorer.genai.Client", return_value=mock_client):
+        report = analyse(None, None, fg, market)
+
+    assert report.risk == "risk-off"
+    assert report.summary == "위험 신호 감지"

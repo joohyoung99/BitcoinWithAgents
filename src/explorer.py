@@ -177,3 +177,101 @@ def collect_etf() -> ETFData | None:
     except Exception as e:
         print(f"[explorer] ETF collection failed: {e}")
         return None
+
+
+def _build_prompt(
+    macro: MacroData | None,
+    etf: ETFData | None,
+    fear_greed: FearGreedData | None,
+    market: MarketData | None,
+) -> str:
+    lines = [
+        "당신은 BTC/USDT 선물 트레이딩 AI 에이전트입니다.",
+        "아래 데이터를 분석하여 현재 시장 상태가 Risk-On인지 Risk-Off인지 판단하세요.",
+        "",
+        "## 수집 데이터",
+    ]
+    if macro:
+        lines += [
+            "### 매크로 (FRED)",
+            f"- 연준 기준금리: {macro.fed_funds_rate}%",
+            f"- 금리 추세: {macro.rate_trend}",
+        ]
+    else:
+        lines.append("### 매크로 (FRED): 수집 실패")
+
+    if etf:
+        lines += [
+            "### ETF 자금흐름 (SoSoValue)",
+            f"- 3일 평균 순유입: {etf.net_flow_3d:,.0f} USD",
+            f"- 신호: {etf.flow_signal}",
+        ]
+    else:
+        lines.append("### ETF 자금흐름: 수집 실패")
+
+    if fear_greed:
+        lines += [
+            "### Fear & Greed Index",
+            f"- 점수: {fear_greed.score}/100",
+            f"- 상태: {fear_greed.label}",
+        ]
+    else:
+        lines.append("### Fear & Greed: 수집 실패")
+
+    if market:
+        lines += [
+            "### 시장 데이터 (Bitget)",
+            f"- 펀딩 레이트: {market.funding_rate:.4f}%",
+            f"- 미결제약정(OI): {market.open_interest:,.0f} USD",
+            f"- 롱숏 비율: {market.long_short_ratio:.2f}",
+        ]
+    else:
+        lines.append("### 시장 데이터: 수집 실패")
+
+    lines += [
+        "",
+        "## Risk-On 조건 (Voting — 2개 이상 충족 시 Risk-On)",
+        "- Fear & Greed > 60",
+        "- ETF 순유입 > 0 (3일 평균)",
+        "- Funding Rate 정상 범위 (0 ~ 0.01%)",
+        "- 매크로 금리 동결/인하 기조",
+        "",
+        "## Risk-Off 조건 (1개라도 충족 시 즉시 Risk-Off)",
+        "- Fear & Greed < 30",
+        "- ETF 자금 순유출 3일 연속",
+        "- Funding Rate 극단값 (> 0.1% 또는 < -0.05%)",
+        "",
+        "## 응답 형식 (JSON만 출력, 마크다운 코드블록 없이)",
+        '{"risk": "risk-on" 또는 "risk-off", "summary": "한국어로 분석 요약 2~3문장"}',
+    ]
+    return "\n".join(lines)
+
+
+def analyse(
+    macro: MacroData | None,
+    etf: ETFData | None,
+    fear_greed: FearGreedData | None,
+    market: MarketData | None,
+) -> ExplorerReport:
+    client = genai.Client()
+    prompt = _build_prompt(macro, etf, fear_greed, market)
+    response = client.models.generate_content(
+        model="gemini-2.5-pro",
+        contents=prompt,
+    )
+    text = response.text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.rsplit("```", 1)[0]
+    parsed = json.loads(text.strip())
+    return ExplorerReport(
+        timestamp=datetime.now(UTC).isoformat(),
+        risk=parsed["risk"],
+        summary=parsed["summary"],
+        macro=macro,
+        etf=etf,
+        fear_greed=fear_greed,
+        market=market,
+    )
