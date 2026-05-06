@@ -188,3 +188,60 @@ def test_analyse_returns_risk_off():
 
     assert report.risk == "risk-off"
     assert report.summary == "위험 신호 감지"
+
+
+def test_run_once_writes_json(tmp_path, monkeypatch):
+    from src import explorer
+    from src.explorer import run_once
+
+    monkeypatch.setattr(explorer, "REPORT_PATH", tmp_path / "explorer_report.json")
+
+    fg = FearGreedData(score=70, label="Greed")
+    market = MarketData(funding_rate=0.005, open_interest=1e9, long_short_ratio=1.2)
+    report = ExplorerReport(
+        timestamp="2026-05-06T00:00:00+00:00",
+        risk="risk-on",
+        summary="좋음",
+        macro=None,
+        etf=None,
+        fear_greed=fg,
+        market=market,
+    )
+
+    with patch("src.explorer.collect_macro", return_value=None), \
+         patch("src.explorer.collect_etf", return_value=None), \
+         patch("src.explorer.collect_fear_greed", return_value=fg), \
+         patch("src.explorer.collect_market", return_value=market), \
+         patch("src.explorer.analyse", return_value=report):
+        run_once()
+
+    written = json.loads((tmp_path / "explorer_report.json").read_text(encoding="utf-8"))
+    assert written["risk"] == "risk-on"
+    assert written["timestamp"] == "2026-05-06T00:00:00+00:00"
+
+
+def test_run_once_survives_collector_failure(tmp_path, monkeypatch):
+    from src import explorer
+    from src.explorer import run_once
+
+    monkeypatch.setattr(explorer, "REPORT_PATH", tmp_path / "explorer_report.json")
+
+    fg = FearGreedData(score=70, label="Greed")
+    report = ExplorerReport(
+        timestamp="2026-05-06T00:00:00+00:00",
+        risk="risk-on",
+        summary="ok",
+        macro=None,
+        etf=None,
+        fear_greed=fg,
+        market=None,
+    )
+
+    with patch("src.explorer.collect_macro", return_value=None), \
+         patch("src.explorer.collect_etf", return_value=None), \
+         patch("src.explorer.collect_fear_greed", return_value=fg), \
+         patch("src.explorer.collect_market", return_value=None), \
+         patch("src.explorer.analyse", return_value=report):
+        run_once()
+
+    assert (tmp_path / "explorer_report.json").exists()

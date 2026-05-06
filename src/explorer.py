@@ -275,3 +275,34 @@ def analyse(
         fear_greed=fear_greed,
         market=market,
     )
+
+
+def save_report(report: ExplorerReport) -> None:
+    REPORT_PATH.parent.mkdir(exist_ok=True)
+    REPORT_PATH.write_text(
+        json.dumps(asdict(report), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def run_once() -> None:
+    try:
+        macro = collect_macro()
+        etf = collect_etf()
+        fear_greed = collect_fear_greed()
+        market = collect_market()
+
+        if all(x is None for x in [macro, etf, fear_greed, market]):
+            print("[explorer] all collectors failed — keeping previous risk state")
+            return
+
+        try:
+            report = analyse(macro, etf, fear_greed, market)
+        except Exception as e:
+            print(f"[explorer] Gemini analysis failed: {e} — keeping previous risk state")
+            return
+
+        save_report(report)
+        print(f"[explorer] {report.timestamp} risk={report.risk}")
+    except Exception as e:
+        print(f"[explorer] run_once unexpected error: {e}")
