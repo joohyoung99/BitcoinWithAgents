@@ -35,3 +35,43 @@ def test_collect_fear_greed_returns_none_on_error():
         result = collect_fear_greed()
 
     assert result is None
+
+
+def test_collect_market_returns_data():
+    from src.explorer import collect_market
+
+    def mock_get(url, params=None, timeout=None):
+        mock = MagicMock()
+        if "current-fund-rate" in url:
+            mock.json.return_value = {
+                "code": "00000",
+                "data": [{"fundingRate": "0.0001"}],
+            }
+        elif "open-interest" in url:
+            mock.json.return_value = {
+                "code": "00000",
+                "data": {"openInterestList": [{"size": "1234567890"}]},
+            }
+        elif "long-short" in url:
+            mock.json.return_value = {
+                "code": "00000",
+                "data": [{"longShortRatio": "1.25"}],
+            }
+        return mock
+
+    with patch("src.explorer.requests.get", side_effect=mock_get):
+        result = collect_market()
+
+    assert isinstance(result, MarketData)
+    assert result.funding_rate == pytest.approx(0.0001)
+    assert result.open_interest == pytest.approx(1_234_567_890.0)
+    assert result.long_short_ratio == pytest.approx(1.25)
+
+
+def test_collect_market_returns_none_on_error():
+    from src.explorer import collect_market
+
+    with patch("src.explorer.requests.get", side_effect=Exception("network error")):
+        result = collect_market()
+
+    assert result is None

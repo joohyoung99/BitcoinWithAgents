@@ -37,3 +37,54 @@ def collect_fear_greed() -> FearGreedData | None:
     except Exception as e:
         print(f"[explorer] fear_greed collection failed: {e}")
         return None
+
+
+def collect_market() -> MarketData | None:
+    try:
+        symbol = "BTCUSDT"
+        product = "USDT-FUTURES"
+
+        # Funding Rate (returns array of data)
+        fr = requests.get(
+            f"{BITGET_BASE}/api/v2/mix/market/current-fund-rate",
+            params={"symbol": symbol, "productType": product},
+            timeout=10,
+        )
+        fr.raise_for_status()
+        fr_data = fr.json()["data"]
+        funding_rate = float(fr_data[0]["fundingRate"]) if fr_data else 0.0
+
+        # Open Interest
+        oi = requests.get(
+            f"{BITGET_BASE}/api/v2/mix/market/open-interest",
+            params={"symbol": symbol, "productType": product},
+            timeout=10,
+        )
+        oi.raise_for_status()
+        oi_data = oi.json()["data"]["openInterestList"]
+        open_interest = float(oi_data[0]["size"]) if oi_data else 0.0
+
+        # Long-Short Ratio (falls back to 1.0 if endpoint unavailable)
+        long_short_ratio = 1.0
+        try:
+            ls = requests.get(
+                f"{BITGET_BASE}/api/v2/mix/market/long-short-pos-ratio",
+                params={"symbol": symbol, "productType": product, "period": "1h"},
+                timeout=10,
+            )
+            ls.raise_for_status()
+            ls_data = ls.json()["data"]
+            if ls_data:
+                long_short_ratio = float(ls_data[0]["longShortRatio"])
+        except Exception:
+            # Endpoint may not be available, use default
+            pass
+
+        return MarketData(
+            funding_rate=funding_rate,
+            open_interest=open_interest,
+            long_short_ratio=long_short_ratio,
+        )
+    except Exception as e:
+        print(f"[explorer] market collection failed: {e}")
+        return None
