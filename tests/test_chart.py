@@ -80,3 +80,77 @@ def test_calc_indicators_ema50_slope_uses_iloc():
     ema50 = df["EMA_50"]
     expected = (ema50.iloc[-1] - ema50.iloc[-4]) / ema50.iloc[-4]
     assert abs(df["ema50_slope"].iloc[-1] - expected) < 1e-10
+
+
+def _make_df_with_adx(adx: float, slope: float = 0.001) -> pd.DataFrame:
+    return pd.DataFrame({
+        "ADX_14": [adx],
+        "RSI_14": [50.0],
+        "EMA_20": [100.0],
+        "EMA_50": [95.0],
+        "EMA_200": [90.0],
+        "ema50_slope": [slope],
+        "close": [97.0],
+        "BBL_20_2.0": [88.0],
+        "BBU_20_2.0": [112.0],
+        "ATRr_14": [2.0],
+    })
+
+
+def test_determine_trend_range_trend():
+    from src.chart import determine_trend_range
+    df = _make_df_with_adx(adx=30.0, slope=0.002)
+    assert determine_trend_range(df, prev_trend_range="range") == "trend"
+
+
+def test_determine_trend_range_hysteresis_keeps_trend():
+    from src.chart import determine_trend_range
+    df = _make_df_with_adx(adx=23.0, slope=0.001)
+    assert determine_trend_range(df, prev_trend_range="trend") == "trend"
+
+
+def test_determine_trend_range_hysteresis_keeps_range():
+    from src.chart import determine_trend_range
+    df = _make_df_with_adx(adx=21.0, slope=-0.001)
+    assert determine_trend_range(df, prev_trend_range="range") == "range"
+
+
+def test_determine_trend_range_range():
+    from src.chart import determine_trend_range
+    df = _make_df_with_adx(adx=15.0)
+    assert determine_trend_range(df, prev_trend_range="trend") == "range"
+
+
+def test_determine_entry_normal_long():
+    from src.chart import determine_entry
+    df = _make_df_with_adx(adx=30.0)
+    # close=97, EMA20=100, EMA50=95 → EMA50 ≤ close ≤ EMA20, RSI=50 → long
+    assert determine_entry(df, "trend", "risk-on") == "long"
+
+
+def test_determine_entry_blocks_long_on_risk_off():
+    from src.chart import determine_entry
+    df = _make_df_with_adx(adx=30.0)
+    assert determine_entry(df, "trend", "risk-off") != "long"
+
+
+def test_determine_entry_halt():
+    from src.chart import determine_entry
+    df = _make_df_with_adx(adx=15.0)
+    assert determine_entry(df, "range", "risk-off") == "none"
+
+
+def test_determine_entry_caution_bb_short():
+    from src.chart import determine_entry
+    df = _make_df_with_adx(adx=15.0)
+    df = df.copy()
+    df["close"] = 112.0
+    assert determine_entry(df, "range", "risk-on") == "short"
+
+
+def test_determine_entry_caution_bb_long():
+    from src.chart import determine_entry
+    df = _make_df_with_adx(adx=15.0)
+    df = df.copy()
+    df["close"] = 88.0
+    assert determine_entry(df, "range", "risk-on") == "long"

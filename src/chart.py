@@ -69,3 +69,52 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ema50_slope"] = (ema50.iloc[-1] - ema50.iloc[-4]) / ema50.iloc[-4]
 
     return df
+
+
+def determine_trend_range(df: pd.DataFrame, prev_trend_range: str) -> str:
+    """Determine if market is in Trend or Range mode using ADX with hysteresis."""
+    adx = float(df["ADX_14"].iloc[-1])
+    slope = float(df["ema50_slope"].iloc[-1])
+
+    if adx > 25 and slope > 0:
+        return "trend"
+    if prev_trend_range == "trend" and adx > 22:
+        return "trend"
+    if adx < 20:
+        return "range"
+    return prev_trend_range  # hysteresis zone 20–22
+
+
+def determine_entry(df: pd.DataFrame, trend_range: str, risk: str) -> str:
+    """Determine entry signal based on trend/range mode and risk regime."""
+    row = df.iloc[-1]
+    close = float(row["close"])
+    ema20 = float(row["EMA_20"])
+    ema50 = float(row["EMA_50"])
+    ema200 = float(row["EMA_200"])
+    rsi = float(row["RSI_14"])
+    bbl = float(row["BBL_20_2.0"])
+    bbu = float(row["BBU_20_2.0"])
+
+    # Halt: range + risk-off
+    if trend_range == "range" and risk == "risk-off":
+        return "none"
+
+    if trend_range == "trend":
+        if risk == "risk-off":
+            if ema20 < ema50 < ema200:
+                return "short"
+            return "none"
+        # Normal: trend + risk-on
+        if ema20 > ema50 > ema200 and ema50 <= close <= ema20 and 40 <= rsi <= 60:
+            return "long"
+        if ema20 < ema50 < ema200:
+            return "short"
+        return "none"
+
+    # Caution: range + risk-on
+    if close >= bbu:
+        return "short"
+    if close <= bbl:
+        return "long"
+    return "none"
