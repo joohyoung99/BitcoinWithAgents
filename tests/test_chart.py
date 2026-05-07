@@ -91,8 +91,8 @@ def _make_df_with_adx(adx: float, slope: float = 0.001) -> pd.DataFrame:
         "EMA_200": [90.0],
         "ema50_slope": [slope],
         "close": [97.0],
-        "BBL_20_2.0": [88.0],
-        "BBU_20_2.0": [112.0],
+        "BBL_20_2.0_2.0": [88.0],
+        "BBU_20_2.0_2.0": [112.0],
         "ATRr_14": [2.0],
     })
 
@@ -218,3 +218,94 @@ def test_update_state_writes_atomic_with_meta(tmp_path, monkeypatch):
     assert state["BTCUSDT"]["entry_signal"] == "long"
     assert state["BTCUSDT"]["risk"] == "risk-on"
     assert state["BTCUSDT"]["risk_summary"] == "test summary"
+
+
+def test_run_chart_once_writes_state_json(tmp_path, monkeypatch):
+    import src.chart as chart_mod
+    from src.chart import run_chart_once
+
+    monkeypatch.setattr(chart_mod, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(chart_mod, "REPORT_PATH", tmp_path / "explorer_report.json")
+    monkeypatch.setattr(chart_mod, "_consecutive_failures", 0)
+
+    (tmp_path / "explorer_report.json").write_text(
+        json.dumps({"risk": "risk-on", "summary": "ok", "timestamp": datetime.now(UTC).isoformat()}),
+        encoding="utf-8",
+    )
+
+    rows = [
+        [str(1000000 + i * 60000),
+         f"{50000 + i}", f"{50200 + i}", f"{49800 + i}", f"{50050 + i}",
+         "10", "500000"]
+        for i in range(300, 0, -1)
+    ]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": rows}
+
+    mock_gemini_client = MagicMock()
+    mock_gemini_response = MagicMock()
+    mock_gemini_response.text = '{"confidence": 70, "comment": "좋음"}'
+    mock_gemini_client.models.generate_content.return_value = mock_gemini_response
+
+    with patch("src.chart.requests.get", return_value=mock_resp), \
+         patch("src.chart.genai.Client", return_value=mock_gemini_client):
+        run_chart_once()
+
+    assert (tmp_path / "state.json").exists()
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert "meta" in state
+    assert "BTCUSDT" in state
+
+
+def test_run_chart_once_suppresses_low_confidence(tmp_path, monkeypatch):
+    import src.chart as chart_mod
+    from src.chart import run_chart_once
+
+    monkeypatch.setattr(chart_mod, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(chart_mod, "REPORT_PATH", tmp_path / "explorer_report.json")
+    monkeypatch.setattr(chart_mod, "_consecutive_failures", 0)
+
+    (tmp_path / "explorer_report.json").write_text(
+        json.dumps({"risk": "risk-on", "summary": "ok", "timestamp": datetime.now(UTC).isoformat()}),
+        encoding="utf-8",
+    )
+
+    rows = [
+        [str(1000000 + i * 60000),
+         f"{50000 + i}", f"{50200 + i}", f"{49800 + i}", f"{50050 + i}",
+         "10", "500000"]
+        for i in range(300, 0, -1)
+    ]
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": rows}
+
+    mock_gemini_client = MagicMock()
+    mock_gemini_response = MagicMock()
+    mock_gemini_response.text = '{"confidence": 40, "comment": "불확실"}'  # below 60
+    mock_gemini_client.models.generate_content.return_value = mock_gemini_response
+
+    with patch("src.chart.requests.get", return_value=mock_resp), \
+         patch("src.chart.genai.Client", return_value=mock_gemini_client):
+        run_chart_once()
+
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state["BTCUSDT"]["entry_signal"] == "none"
+
+
+def test_run_chart_once_consecutive_failure_forces_none(tmp_path, monkeypatch):
+    import src.chart as chart_mod
+    from src.chart import run_chart_once
+
+    monkeypatch.setattr(chart_mod, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(chart_mod, "REPORT_PATH", tmp_path / "explorer_report.json")
+    monkeypatch.setattr(chart_mod, "_consecutive_failures", 3)
+
+    (tmp_path / "explorer_report.json").write_text(
+        json.dumps({"risk": "risk-on", "summary": "ok", "timestamp": datetime.now(UTC).isoformat()}),
+        encoding="utf-8",
+    )
+
+    with patch("src.chart.requests.get", side_effect=Exception("API down")):
+        run_chart_once()
+
+    # Should not raise; process lives on

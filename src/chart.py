@@ -93,8 +93,8 @@ def determine_entry(df: pd.DataFrame, trend_range: str, risk: str) -> str:
     ema50 = float(row["EMA_50"])
     ema200 = float(row["EMA_200"])
     rsi = float(row["RSI_14"])
-    bbl = float(row["BBL_20_2.0"])
-    bbu = float(row["BBU_20_2.0"])
+    bbl = float(row["BBL_20_2.0_2.0"])
+    bbu = float(row["BBU_20_2.0_2.0"])
 
     # Halt: range + risk-off
     if trend_range == "range" and risk == "risk-off":
@@ -212,3 +212,87 @@ def update_state(signal: ChartSignal) -> None:
     tmp_path = STATE_PATH.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(str(tmp_path), str(STATE_PATH))
+
+
+def _read_prev_state() -> dict:
+    if STATE_PATH.exists():
+        try:
+            return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _read_risk() -> tuple[str, str]:
+    """Returns (risk, risk_summary). Falls back to risk-off if stale/missing."""
+    if not REPORT_PATH.exists():
+        return "risk-off", ""
+    try:
+        report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+        ts_str = report.get("timestamp", "")
+        if ts_str:
+            ts = datetime.fromisoformat(ts_str)
+            if (datetime.now(UTC) - ts) > timedelta(minutes=STALE_EXPLORER_MIN):
+                return "risk-off", report.get("summary", "")
+        return report.get("risk", "risk-off"), report.get("summary", "")
+    except Exception:
+        return "risk-off", ""
+
+
+def run_chart_once() -> None:
+    global _consecutive_failures
+
+    try:
+        prev_state = _read_prev_state()
+        prev_symbol = prev_state.get("BTCUSDT", {})
+        prev_trend_range = prev_symbol.get("trend_range", "range")
+
+        risk, _ = _read_risk()
+
+        df = fetch_candles()
+        df = calc_indicators(df)
+
+        trend_range = determine_trend_range(df, prev_trend_range)
+        entry_signal = determine_entry(df, trend_range, risk)
+
+        confidence, comment = score_signal(df, entry_signal, trend_range)
+        if confidence < 60:
+            entry_signal = "none"
+            comment = f"[suppressed confidence={confidence}] {comment}"
+
+        # Stale state.json check
+        if prev_symbol:
+            try:
+                prev_updated = datetime.fromisoformat(prev_symbol.get("updated_at", ""))
+                if (datetime.now(UTC) - prev_updated) > timedelta(minutes=STALE_CHART_MIN):
+                    entry_signal = "none"
+            except Exception:
+                pass
+
+        row = df.iloc[-1]
+        signal = ChartSignal(
+            symbol="BTCUSDT",
+            updated_at=datetime.now(UTC).isoformat(),
+            trend_range=trend_range,
+            adx=round(float(row["ADX_14"]), 4),
+            rsi=round(float(row["RSI_14"]), 4),
+            ema_aligned=bool(row["EMA_20"] > row["EMA_50"] > row["EMA_200"]),
+            ema50_slope=round(float(df["ema50_slope"].iloc[-1]), 6),
+            atr=round(float(row["ATRr_14"]), 4),
+            entry_signal=entry_signal,
+            confidence=confidence,
+            signal_summary=comment,
+        )
+
+        # Consecutive failure block
+        if _consecutive_failures >= 3:
+            signal.entry_signal = "none"
+            print(f"[chart] consecutive_failures={_consecutive_failures} — entry_signal forced none")
+
+        update_state(signal)
+        _consecutive_failures = 0
+        print(f"[chart] {signal.updated_at} trend={trend_range} signal={signal.entry_signal} conf={confidence}")
+
+    except Exception as e:
+        _consecutive_failures += 1
+        print(f"[chart] run_chart_once error (consecutive={_consecutive_failures}): {e}")
