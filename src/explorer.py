@@ -334,6 +334,7 @@ def main() -> None:
         minutes=15,
         start_date=now + timedelta(minutes=5),
         id="chart_regime",
+        misfire_grace_time=60,
     )
     print("[explorer] scheduler started — explorer every 1h, chart+regime every 15min (Ctrl+C to stop)")
     scheduler.start()

@@ -229,3 +229,36 @@ def test_handle_regime_change_idempotent(tmp_path, monkeypatch):
     mock_post.assert_not_called()
     # last_transition unchanged (already was NORMAL_TO_HALT)
     assert positions_data["last_transition"] == "NORMAL_TO_HALT"
+
+
+def test_run_executor_once_skips_on_halt(tmp_path, monkeypatch):
+    import src.executor as ex
+    from src.executor import run_executor_once
+    import json
+
+    monkeypatch.setattr(ex, "POSITIONS_PATH", tmp_path / "positions.json")
+    monkeypatch.setattr(ex, "DAILY_PATH", tmp_path / "daily.json")
+    monkeypatch.setattr(ex, "TRADES_PATH", tmp_path / "trades.csv")
+    monkeypatch.setattr(ex, "STATE_PATH", tmp_path / "state.json")
+
+    state = {
+        "meta": {"schema_version": 1, "updated_at": "2026-05-07T12:00:00+00:00"},
+        "BTCUSDT": {
+            "updated_at": "2026-05-07T12:00:00+00:00",
+            "regime": "halt",
+            "entry_signal": "long",
+            "confidence": 80,
+            "atr": 1000.0,
+            "regime_changed": False,
+            "regime_transition": "",
+            "close": 50000.0,
+        },
+    }
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    mock_client = MagicMock()
+    with patch("src.executor.get_client", return_value=mock_client), \
+         patch("src.executor._bitget_post") as mock_post:
+        run_executor_once()
+
+    mock_post.assert_not_called()

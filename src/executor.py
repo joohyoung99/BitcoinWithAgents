@@ -352,3 +352,140 @@ def handle_regime_change(
     positions_data["last_transition"] = transition
     save_positions(positions_data)
     print(f"[executor] regime change handled: {transition}")
+
+
+def run_executor_once() -> None:
+    try:
+        # 1. Read state.json
+        if not STATE_PATH.exists():
+            print("[executor] state.json missing — skip")
+            return
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        sym = state.get("BTCUSDT", {})
+        if not sym:
+            print("[executor] no BTCUSDT in state.json — skip")
+            return
+
+        regime = sym.get("regime", "halt")
+        entry_signal = sym.get("entry_signal", "none")
+        atr = float(sym.get("atr", 0.0))
+        current_price = float(sym.get("close", 0.0))
+        regime_changed = sym.get("regime_changed", False)
+        regime_transition = sym.get("regime_transition", "")
+        prev_regime = sym.get("prev_regime", regime)
+
+        # 2. Load positions + daily
+        positions_data = load_positions()
+        daily = load_daily()
+
+        client = get_client()
+
+        # 3. TP check (existing positions first)
+        if positions_data["positions"] and current_price > 0:
+            check_tp_hits(client, positions_data, daily, current_price)
+            save_positions(positions_data)
+            save_daily(daily)
+
+        # 4. Regime change handling
+        if regime_changed and regime_transition:
+            handle_regime_change(
+                client, positions_data, daily,
+                new_regime=regime,
+                prev_regime=prev_regime,
+                atr=atr,
+                current_price=current_price,
+            )
+            save_positions(positions_data)
+            save_daily(daily)
+
+        # 5. Risk checks
+        ok, reason = check_risk(positions_data["positions"], daily, regime)
+        if not ok:
+            print(f"[executor] risk check failed: {reason} — skip entry")
+            return
+
+        # 6. Entry signal check
+        if entry_signal == "none":
+            print("[executor] entry_signal=none — skip")
+            return
+
+        direction = entry_signal  # "long" | "short"
+        if regime == "risk_off_trend" and direction == "long":
+            print("[executor] risk_off_trend: long blocked — skip")
+            return
+
+        # 7. Position sizing
+        try:
+            balance_data = client.account.get_accounts(PRODUCT_TYPE)
+            if balance_data.code != "00000" or not balance_data.data:
+                print("[executor] balance fetch failed — skip")
+                return
+            balance = float(balance_data.data[0]["available"])
+        except Exception as e:
+            print(f"[executor] balance fetch error: {e} — skip")
+            return
+        size_usdt = calc_trade_size(balance)
+        leverage = get_leverage(regime, direction)
+
+        # 8. Place limit entry (3 retry)
+        order_result = place_limit_order(client, direction, size_usdt, current_price, leverage)
+        if not order_result:
+            print("[executor] entry order failed after retries — skip")
+            return
+        order_id = str(order_result.get("orderId", ""))
+
+        # 9. Poll order fill via REST (30s, every 3s)
+        fill_data = None
+        for _ in range(10):
+            time.sleep(3)
+            try:
+                detail = client.account.request_handler.request(
+                    "GET", "/api/v2/mix/order/detail",
+                    {"symbol": SYMBOL, "productType": PRODUCT_TYPE, "orderId": order_id},
+                )
+                status = (detail.get("data") or {}).get("status", "")
+                if status == "full_fill":
+                    fill_data = detail.get("data", {})
+                    break
+                elif status in ("cancelled", "cancel"):
+                    print(f"[executor] order {order_id} cancelled externally — skip")
+                    return
+            except Exception as e:
+                print(f"[executor] order detail poll error: {e}")
+                continue
+
+        if fill_data is None:
+            print(f"[executor] order {order_id} not filled in 30s — cancelling")
+            cancel_order(client, order_id)
+            return
+
+        entry_price = float(fill_data.get("priceAvg", current_price))
+        sl_price = calc_sl_price(direction, entry_price, atr, regime)
+        tp_price = calc_tp_price(direction, entry_price, atr, regime)
+
+        # 10. Place exchange SL (3 retry, emergency close on all fail)
+        position_record = {
+            "order_id": order_id,
+            "direction": direction,
+            "size_usdt": size_usdt,
+            "entry_price": entry_price,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "sl_order_id": "",
+            "regime": regime,
+            "leverage": leverage,
+            "atr_at_entry": atr,
+            "opened_at": datetime.now(UTC).isoformat(),
+        }
+        sl_ok = place_stop_loss_with_emergency(client, position_record)
+        if not sl_ok:
+            print(f"[executor] SL failed + emergency close triggered for {order_id}")
+            return
+
+        # 11. Update positions.json
+        positions_data["positions"].append(position_record)
+        save_positions(positions_data)
+        print(f"[executor] opened {direction} order={order_id} entry={entry_price} sl={sl_price} tp={tp_price}")
+
+    except Exception as e:
+        print(f"[executor] run_executor_once error: {e}")
