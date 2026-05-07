@@ -241,3 +241,24 @@ def test_run_once_survives_collector_failure(tmp_path, monkeypatch):
         run_once()
 
     assert (tmp_path / "explorer_report.json").exists()
+
+
+def test_main_exits_after_max_restarts(monkeypatch):
+    from src.explorer import main
+
+    mock_scheduler = MagicMock()
+    mock_scheduler.start.return_value = None  # returns immediately — triggers restart
+
+    with patch("src.explorer.BlockingScheduler", return_value=mock_scheduler), \
+         patch("src.explorer.run_once"), \
+         patch("src.explorer.run_chart_once"), \
+         patch("src.explorer.run_regime_once"), \
+         patch("src.explorer.run_executor_once"), \
+         patch("src.explorer.run_ws_monitor"), \
+         patch("src.explorer.time.sleep"), \
+         patch("src.explorer.watchdog.start"), \
+         patch("src.explorer.watchdog.beat"), \
+         pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1

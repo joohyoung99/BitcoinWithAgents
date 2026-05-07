@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
+import threading
 import dotenv
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import requests
+from apscheduler.schedulers.blocking import BlockingScheduler
 
+from src import watchdog
+from src.chart import run_chart_once
+from src.executor import run_executor_once
 from src.gemini import get_model
 from src.models import (
     ETFData,
@@ -17,6 +24,8 @@ from src.models import (
     MacroData,
     MarketData,
 )
+from src.regime import run_regime_once
+from src.ws_monitor import run_ws_monitor
 
 dotenv.load_dotenv()  # Load environment variables from .env file
 
@@ -309,40 +318,56 @@ def run_once() -> None:
 
 
 def main() -> None:
-    import threading
-    from apscheduler.schedulers.blocking import BlockingScheduler
-    from src.chart import run_chart_once
-    from src.executor import run_executor_once
-    from src.regime import run_regime_once
-    from src.ws_monitor import run_ws_monitor
+    def _job_explorer() -> None:
+        watchdog.beat()
+        run_once()
 
-    def run_chart_and_regime_and_executor() -> None:
+    def _job_chain() -> None:
+        watchdog.beat()
         run_chart_once()
         run_regime_once()
         run_executor_once()
 
-    # Start WebSocket monitoring as daemon thread
     ws_thread = threading.Thread(target=run_ws_monitor, daemon=True, name="ws_monitor")
     ws_thread.start()
     print("[explorer] WebSocket monitor started")
 
     print("[explorer] starting — running once immediately")
-    run_once()
-    run_chart_and_regime_and_executor()
+    _job_explorer()
+    _job_chain()
 
-    now = datetime.now(UTC)
-    scheduler = BlockingScheduler()
-    scheduler.add_job(run_once, "interval", hours=1, id="explorer")
-    scheduler.add_job(
-        run_chart_and_regime_and_executor,
-        "interval",
-        minutes=15,
-        start_date=now + timedelta(minutes=5),
-        id="chart_regime_executor",
-        misfire_grace_time=60,
-    )
-    print("[explorer] scheduler started — explorer 1h, chart+regime+executor 15min (Ctrl+C to stop)")
-    scheduler.start()
+    MAX_RESTARTS = 3
+    restart_count = 0
+
+    while True:
+        watchdog.beat()
+        now = datetime.now(UTC)
+        scheduler = BlockingScheduler()
+        scheduler.add_job(_job_explorer, "interval", hours=1, id="explorer")
+        scheduler.add_job(
+            _job_chain,
+            "interval",
+            minutes=15,
+            start_date=now + timedelta(minutes=5),
+            id="chart_regime_executor",
+            misfire_grace_time=60,
+        )
+        watchdog.start(scheduler, stale_minutes=20)
+        print("[explorer] scheduler started — explorer 1h, chart+regime+executor 15min (Ctrl+C to stop)")
+
+        try:
+            scheduler.start()
+        except (KeyboardInterrupt, SystemExit):
+            print("[explorer] shutdown requested")
+            return
+
+        restart_count += 1
+        if restart_count >= MAX_RESTARTS:
+            print(f"[watchdog] {MAX_RESTARTS} restarts exhausted — exiting")
+            sys.exit(1)
+
+        print(f"[explorer] restarting (attempt {restart_count})")
+        time.sleep(5)
 
 
 if __name__ == "__main__":
