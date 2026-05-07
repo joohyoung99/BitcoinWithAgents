@@ -4,7 +4,7 @@ import json
 import os
 import dotenv
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -314,13 +314,23 @@ def run_once() -> None:
 
 def main() -> None:
     from apscheduler.schedulers.blocking import BlockingScheduler
+    from src.chart import run_chart_once
 
     print("[explorer] starting — running once immediately")
     run_once()
+    run_chart_once()
 
+    now = datetime.now(UTC)
     scheduler = BlockingScheduler()
-    scheduler.add_job(run_once, "interval", hours=1)
-    print("[explorer] scheduler started — runs every 1 hour (Ctrl+C to stop)")
+    scheduler.add_job(run_once, "interval", hours=1, id="explorer")
+    scheduler.add_job(
+        run_chart_once,
+        "interval",
+        minutes=15,
+        start_date=now + timedelta(minutes=5),
+        id="chart",
+    )
+    print("[explorer] scheduler started — explorer every 1h, chart every 15min (Ctrl+C to stop)")
     scheduler.start()
 
 
