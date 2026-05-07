@@ -94,3 +94,104 @@ def review_regime_with_gemini(
     except Exception as e:
         print(f"[regime] Gemini review failed: {e} — using rule-based result")
         return regime
+
+
+def update_regime_state(rs: RegimeState) -> None:
+    state: dict = {}
+    if STATE_PATH.exists():
+        try:
+            state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+
+    symbol_data = state.get(rs.symbol, {})
+    symbol_data.update({
+        "regime": rs.regime,
+        "prev_regime": rs.prev_regime,
+        "regime_changed": rs.regime_changed,
+        "regime_transition": rs.regime_transition,
+        "regime_summary": rs.regime_summary,
+        "regime_updated_at": rs.regime_updated_at,
+    })
+    state[rs.symbol] = symbol_data
+
+    STATE_PATH.parent.mkdir(exist_ok=True)
+    tmp = STATE_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(str(tmp), str(STATE_PATH))
+
+
+def run_regime_once() -> None:
+    try:
+        state: dict = {}
+        if STATE_PATH.exists():
+            try:
+                state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        symbol_data = state.get("BTCUSDT", {})
+
+        if not symbol_data:
+            rs = RegimeState(
+                symbol="BTCUSDT",
+                regime="halt",
+                prev_regime="halt",
+                regime_changed=False,
+                regime_transition="",
+                regime_summary="state.json 없음 — fail-safe halt",
+                regime_updated_at=datetime.now(UTC).isoformat(),
+            )
+            update_regime_state(rs)
+            print("[regime] state.json missing — halt")
+            return
+
+        updated_at_str = symbol_data.get("updated_at", "")
+        if updated_at_str:
+            try:
+                updated_at = datetime.fromisoformat(updated_at_str)
+                if (datetime.now(UTC) - updated_at) > timedelta(minutes=STALE_REGIME_MIN):
+                    rs = RegimeState(
+                        symbol="BTCUSDT",
+                        regime="halt",
+                        prev_regime=symbol_data.get("regime", "halt"),
+                        regime_changed=True,
+                        regime_transition=f"{symbol_data.get('regime', 'halt').upper()}_TO_HALT",
+                        regime_summary="state.json stale — fail-safe halt",
+                        regime_updated_at=datetime.now(UTC).isoformat(),
+                    )
+                    update_regime_state(rs)
+                    print("[regime] state.json stale — halt")
+                    return
+            except Exception:
+                pass
+
+        trend_range = symbol_data.get("trend_range", "")
+        risk = symbol_data.get("risk", "")
+        signal_summary = symbol_data.get("signal_summary", "")
+        prev_regime = symbol_data.get("regime", "halt")
+
+        regime = classify_regime(trend_range, risk)
+        regime = review_regime_with_gemini(regime, trend_range, risk, signal_summary)
+
+        regime_changed = regime != prev_regime
+        regime_transition = (
+            f"{prev_regime.upper()}_TO_{regime.upper()}" if regime_changed else ""
+        )
+
+        rs = RegimeState(
+            symbol="BTCUSDT",
+            regime=regime,
+            prev_regime=prev_regime,
+            regime_changed=regime_changed,
+            regime_transition=regime_transition,
+            regime_summary=signal_summary,
+            regime_updated_at=datetime.now(UTC).isoformat(),
+        )
+        update_regime_state(rs)
+
+        change_str = f" [{regime_transition}]" if regime_changed else ""
+        print(f"[regime] {rs.regime_updated_at} regime={regime}{change_str}")
+
+    except Exception as e:
+        print(f"[regime] run_regime_once error: {e}")

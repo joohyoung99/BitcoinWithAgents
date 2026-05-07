@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from src.models import RegimeState
+import src.regime as regime_mod
 
 
 def test_regime_state_dataclass():
@@ -68,3 +69,73 @@ def test_review_regime_gemini_fails_returns_rule_regime():
         result = review_regime_with_gemini("caution", "range", "risk-on", "횡보")
 
     assert result == "caution"
+
+
+def test_run_regime_once_writes_state(tmp_path, monkeypatch):
+    import src.regime as regime_mod
+    from src.regime import run_regime_once
+
+    monkeypatch.setattr(regime_mod, "STATE_PATH", tmp_path / "state.json")
+
+    now_iso = datetime.now(UTC).isoformat()
+    state = {
+        "meta": {"schema_version": 1, "updated_at": now_iso},
+        "BTCUSDT": {
+            "updated_at": now_iso,
+            "risk": "risk-on",
+            "trend_range": "trend",
+            "signal_summary": "EMA 상승",
+        },
+    }
+    (tmp_path / "state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.text = '{"regime": "normal", "comment": "정배열 확인"}'
+    mock_client.models.generate_content.return_value = mock_resp
+
+    with patch("src.regime.genai.Client", return_value=mock_client):
+        run_regime_once()
+
+    result = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert result["BTCUSDT"]["regime"] == "normal"
+    assert "regime_changed" in result["BTCUSDT"]
+    assert "regime_updated_at" in result["BTCUSDT"]
+
+
+def test_run_regime_once_detects_change(tmp_path, monkeypatch):
+    import src.regime as regime_mod
+    from src.regime import run_regime_once
+
+    monkeypatch.setattr(regime_mod, "STATE_PATH", tmp_path / "state.json")
+
+    now_iso = datetime.now(UTC).isoformat()
+    state = {
+        "meta": {"schema_version": 1, "updated_at": now_iso},
+        "BTCUSDT": {
+            "updated_at": now_iso,
+            "risk": "risk-on",
+            "trend_range": "trend",
+            "signal_summary": "추세 진입",
+            "regime": "caution",
+        },
+    }
+    (tmp_path / "state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.text = '{"regime": "normal", "comment": "정배열"}'
+    mock_client.models.generate_content.return_value = mock_resp
+
+    with patch("src.regime.genai.Client", return_value=mock_client):
+        run_regime_once()
+
+    result = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert result["BTCUSDT"]["regime"] == "normal"
+    assert result["BTCUSDT"]["regime_changed"] is True
+    assert result["BTCUSDT"]["regime_transition"] == "CAUTION_TO_NORMAL"
+    assert result["BTCUSDT"]["prev_regime"] == "caution"
