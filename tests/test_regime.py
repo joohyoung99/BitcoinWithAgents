@@ -18,3 +18,30 @@ def test_regime_state_dataclass():
     assert rs.regime == "normal"
     assert rs.regime_changed is True
     assert rs.regime_transition == "CAUTION_TO_NORMAL"
+
+
+def test_classify_normal():
+    from src.regime import classify_regime
+    assert classify_regime("trend", "risk-on") == "normal"
+
+
+def test_classify_caution():
+    from src.regime import classify_regime
+    assert classify_regime("range", "risk-on") == "caution"
+
+
+def test_classify_risk_off_trend():
+    from src.regime import classify_regime
+    assert classify_regime("trend", "risk-off") == "risk_off_trend"
+
+
+def test_classify_halt():
+    from src.regime import classify_regime
+    assert classify_regime("range", "risk-off") == "halt"
+
+
+def test_classify_unknown_defaults_halt():
+    from src.regime import classify_regime
+    assert classify_regime("unknown", "garbage") == "halt"
+    assert classify_regime("trend", "") == "halt"
+    assert classify_regime("", "risk-on") == "halt"
