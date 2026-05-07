@@ -34,6 +34,7 @@ def test_generate_content_logs_llm_on_success():
     assert row is not None
     assert row[1] == "gemini-2.5-flash"
     assert row[2] == 1
+    assert row[0] != ""  # _caller_module() returned a non-empty module name
 
 
 def test_generate_content_logs_llm_on_failure():

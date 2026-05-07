@@ -48,7 +48,7 @@ class _Model:
                 module=_caller_module(),
                 model=self._model_name,
                 prompt=prompt,
-                response_text=result.text,
+                response_text=result.text or "",
                 duration_ms=duration_ms,
                 success=True,
             )
