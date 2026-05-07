@@ -262,3 +262,4 @@ def test_main_exits_after_max_restarts(monkeypatch):
         main()
 
     assert exc_info.value.code == 1
+    assert mock_scheduler.start.call_count == 3

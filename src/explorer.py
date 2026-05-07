@@ -5,11 +5,11 @@ import os
 import sys
 import time
 import threading
-import dotenv
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import dotenv
 import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -352,6 +352,7 @@ def main() -> None:
             id="chart_regime_executor",
             misfire_grace_time=60,
         )
+        # spawns a new daemon thread each iteration; orphaned threads (≤ MAX_RESTARTS) die with the process
         watchdog.start(scheduler, stale_minutes=20)
         print("[explorer] scheduler started — explorer 1h, chart+regime+executor 15min (Ctrl+C to stop)")
 
