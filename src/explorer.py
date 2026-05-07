@@ -313,30 +313,39 @@ def run_once() -> None:
 
 
 def main() -> None:
+    import threading
     from apscheduler.schedulers.blocking import BlockingScheduler
     from src.chart import run_chart_once
+    from src.executor import run_executor_once
     from src.regime import run_regime_once
+    from src.ws_monitor import run_ws_monitor
 
-    def run_chart_and_regime() -> None:
+    def run_chart_and_regime_and_executor() -> None:
         run_chart_once()
         run_regime_once()
+        run_executor_once()
+
+    # Start WebSocket monitoring as daemon thread
+    ws_thread = threading.Thread(target=run_ws_monitor, daemon=True, name="ws_monitor")
+    ws_thread.start()
+    print("[explorer] WebSocket monitor started")
 
     print("[explorer] starting — running once immediately")
     run_once()
-    run_chart_and_regime()
+    run_chart_and_regime_and_executor()
 
     now = datetime.now(UTC)
     scheduler = BlockingScheduler()
     scheduler.add_job(run_once, "interval", hours=1, id="explorer")
     scheduler.add_job(
-        run_chart_and_regime,
+        run_chart_and_regime_and_executor,
         "interval",
         minutes=15,
         start_date=now + timedelta(minutes=5),
-        id="chart_regime",
+        id="chart_regime_executor",
         misfire_grace_time=60,
     )
-    print("[explorer] scheduler started — explorer every 1h, chart+regime every 15min (Ctrl+C to stop)")
+    print("[explorer] scheduler started — explorer 1h, chart+regime+executor 15min (Ctrl+C to stop)")
     scheduler.start()
 
 
