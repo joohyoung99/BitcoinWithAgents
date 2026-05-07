@@ -22,7 +22,7 @@ STALE_EXPLORER_MIN = 120
 _consecutive_failures: int = 0
 
 
-def fetch_candles(interval: str = "15min", limit: int = 500) -> pd.DataFrame:
+def fetch_candles(interval: str = "15m", limit: int = 500) -> pd.DataFrame:
     resp = requests.get(
         f"{BITGET_BASE}/api/v2/mix/market/candles",
         params={

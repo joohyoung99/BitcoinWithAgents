@@ -205,9 +205,9 @@ GEMINI_API_KEY=
 ## 개발 단계
 
 - [x] 1단계: Bitget 데모 API 연결 및 잔고 조회
-- [ ] 2단계: 탐색 에이전트 (매크로/ETF/심리 + Gemini 분석)
-- [ ] 3단계: 차트 분석 에이전트 (지표 + Gemini 판단)
-- [ ] 4단계: Regime Classifier
+- [x] 2단계: 탐색 에이전트 (매크로/ETF/심리 + Gemini 분석)
+- [x] 3단계: 차트 분석 에이전트 (지표 + Gemini 판단)
+- [x] 4단계: Regime Classifier
 - [ ] 5단계: 리스크 관리 + 주문 실행
 - [ ] 6단계: 내결함성 (Watchdog + 상태 복구)
 - [ ] 7단계: 로그 시스템
