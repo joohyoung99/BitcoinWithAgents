@@ -315,22 +315,27 @@ def run_once() -> None:
 def main() -> None:
     from apscheduler.schedulers.blocking import BlockingScheduler
     from src.chart import run_chart_once
+    from src.regime import run_regime_once
+
+    def run_chart_and_regime() -> None:
+        run_chart_once()
+        run_regime_once()
 
     print("[explorer] starting — running once immediately")
     run_once()
-    run_chart_once()
+    run_chart_and_regime()
 
     now = datetime.now(UTC)
     scheduler = BlockingScheduler()
     scheduler.add_job(run_once, "interval", hours=1, id="explorer")
     scheduler.add_job(
-        run_chart_once,
+        run_chart_and_regime,
         "interval",
         minutes=15,
         start_date=now + timedelta(minutes=5),
-        id="chart",
+        id="chart_regime",
     )
-    print("[explorer] scheduler started — explorer every 1h, chart every 15min (Ctrl+C to stop)")
+    print("[explorer] scheduler started — explorer every 1h, chart+regime every 15min (Ctrl+C to stop)")
     scheduler.start()
 
 
