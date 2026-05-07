@@ -172,3 +172,60 @@ def test_sl_failure_triggers_emergency_close():
 
     assert result is False
     assert mock_post.call_count == 4  # 3 SL + 1 emergency
+
+
+def test_tp_hit_triggers_market_close(tmp_path, monkeypatch):
+    import src.executor as ex
+    from src.executor import check_tp_hits
+    monkeypatch.setattr(ex, "POSITIONS_PATH", tmp_path / "positions.json")
+    monkeypatch.setattr(ex, "DAILY_PATH", tmp_path / "daily.json")
+    monkeypatch.setattr(ex, "TRADES_PATH", tmp_path / "trades.csv")
+
+    position = {
+        "order_id": "tp1",
+        "direction": "long",
+        "size_usdt": 1000.0,
+        "entry_price": 50000.0,
+        "sl_price": 48500.0,
+        "tp_price": 53000.0,
+        "sl_order_id": "sl1",
+        "regime": "normal",
+        "leverage": 5,
+        "atr_at_entry": 1000.0,
+        "opened_at": "2026-05-07T00:00:00+00:00",
+    }
+    positions_data = {"last_transition": "", "positions": [position]}
+    daily = {"date": "2026-05-07", "trade_count": 0, "wins": 0,
+             "losses": 0, "consecutive_losses": 0, "daily_pnl_usdt": 0.0}
+
+    mock_client = MagicMock()
+    with patch("src.executor._bitget_post") as mock_post:
+        mock_post.return_value = {"code": "00000"}
+        check_tp_hits(mock_client, positions_data, daily, current_price=53001.0)
+
+    mock_post.assert_called_once()
+    assert len(positions_data["positions"]) == 0
+    assert daily["wins"] == 1
+
+
+def test_handle_regime_change_idempotent(tmp_path, monkeypatch):
+    import src.executor as ex
+    from src.executor import handle_regime_change
+    monkeypatch.setattr(ex, "POSITIONS_PATH", tmp_path / "positions.json")
+    monkeypatch.setattr(ex, "DAILY_PATH", tmp_path / "daily.json")
+    monkeypatch.setattr(ex, "TRADES_PATH", tmp_path / "trades.csv")
+
+    positions_data = {"last_transition": "NORMAL_TO_HALT", "positions": []}
+    daily = {"date": "2026-05-07", "trade_count": 0, "wins": 0,
+             "losses": 0, "consecutive_losses": 0, "daily_pnl_usdt": 0.0}
+
+    mock_client = MagicMock()
+    with patch("src.executor._bitget_post") as mock_post:
+        # Same transition already handled → no Bitget calls
+        handle_regime_change(mock_client, positions_data, daily,
+                             new_regime="halt", prev_regime="normal",
+                             atr=1000.0, current_price=50000.0)
+
+    mock_post.assert_not_called()
+    # last_transition unchanged (already was NORMAL_TO_HALT)
+    assert positions_data["last_transition"] == "NORMAL_TO_HALT"

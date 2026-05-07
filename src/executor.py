@@ -266,3 +266,89 @@ def place_stop_loss_with_emergency(client, position: dict) -> bool:
         "holdSide": hold_side,
     })
     return False
+
+
+def check_tp_hits(client, positions_data: dict, daily: dict, current_price: float) -> None:
+    """Check if TP is hit for any position. If so, market close."""
+    for pos in list(positions_data["positions"]):
+        tp = pos["tp_price"]
+        direction = pos["direction"]
+        hit = current_price >= tp if direction == "long" else current_price <= tp
+        if hit:
+            print(f"[executor] TP hit order={pos['order_id']} price={current_price} tp={tp}")
+            close_position_market(client, pos, "TP", daily, positions_data)
+
+
+def _tighten_sl(client, pos: dict, atr: float) -> None:
+    """Tighten SL to ATR×0.8. New SL submitted first, then old SL cancelled (safe order)."""
+    mult = 0.8
+    entry = pos["entry_price"]
+    new_sl = entry - atr * mult if pos["direction"] == "long" else entry + atr * mult
+
+    for attempt in range(3):
+        try:
+            resp = _bitget_post(client, "/api/v2/mix/order/place-tpsl-order", {
+                "symbol": SYMBOL,
+                "productType": PRODUCT_TYPE,
+                "marginCoin": MARGIN_COIN,
+                "planType": "loss_plan",
+                "triggerPrice": str(round(new_sl, 2)),
+                "holdSide": pos["direction"],
+                "size": "0",
+                "triggerType": "mark_price",
+            })
+            if resp and resp.get("code") == "00000":
+                # New SL confirmed → now cancel old SL
+                if pos.get("sl_order_id"):
+                    cancel_order(client, pos["sl_order_id"])
+                new_sl_id = (resp.get("data") or {}).get("orderId", "")
+                pos["sl_price"] = new_sl
+                pos["sl_order_id"] = new_sl_id
+                return
+            print(f"[executor] tighten_sl attempt {attempt+1} failed: {resp}")
+        except Exception as e:
+            print(f"[executor] tighten_sl attempt {attempt+1} exception: {e}")
+        if attempt < 2:
+            time.sleep(1)
+    print(f"[executor] tighten_sl failed — keeping old SL order={pos['order_id']}")
+
+
+def handle_regime_change(
+    client,
+    positions_data: dict,
+    daily: dict,
+    new_regime: str,
+    prev_regime: str,
+    atr: float,
+    current_price: float,
+) -> None:
+    """Handle regime transitions. Idempotent via last_transition check."""
+    transition = f"{prev_regime.upper()}_TO_{new_regime.upper()}"
+
+    if positions_data.get("last_transition") == transition:
+        print(f"[executor] regime change {transition} already handled — skip")
+        return
+
+    halt_transitions = {
+        "NORMAL_TO_HALT", "CAUTION_TO_HALT",
+        "RISK_OFF_TREND_TO_HALT", "NORMAL_TO_RISK_OFF_TREND",
+    }
+    tighten_transitions = {"NORMAL_TO_CAUTION"}
+
+    if transition in halt_transitions:
+        for pos in list(positions_data["positions"]):
+            pnl = _calc_pnl(pos, current_price)
+            if pnl > 0:
+                print(f"[executor] {transition}: closing profitable pos {pos['order_id']}")
+                close_position_market(client, pos, "REGIME_CHANGE", daily, positions_data)
+            else:
+                print(f"[executor] {transition}: tightening SL pos {pos['order_id']}")
+                _tighten_sl(client, pos, atr)
+
+    elif transition in tighten_transitions:
+        for pos in positions_data["positions"]:
+            _tighten_sl(client, pos, atr)
+
+    positions_data["last_transition"] = transition
+    save_positions(positions_data)
+    print(f"[executor] regime change handled: {transition}")
