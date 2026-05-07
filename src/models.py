@@ -50,3 +50,14 @@ class ChartSignal:
     entry_signal: str       # "long" | "short" | "none"
     confidence: int         # 0–100
     signal_summary: str
+
+
+@dataclass
+class RegimeState:
+    symbol: str
+    regime: str           # "normal" | "caution" | "risk_off_trend" | "halt"
+    prev_regime: str
+    regime_changed: bool
+    regime_transition: str  # "CAUTION_TO_NORMAL" | "" (empty if no change)
+    regime_summary: str
+    regime_updated_at: str
