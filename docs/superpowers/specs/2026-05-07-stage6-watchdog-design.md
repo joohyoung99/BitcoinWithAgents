@@ -30,9 +30,9 @@ Python threading, APScheduler BlockingScheduler (기존 유지)
   beat() -> None
     - _last_beat = time.time()
 
-  start(scheduler, stale_minutes: int = 20) -> None
+  start(scheduler, stale_minutes: int = 20, check_interval: float = 300.0) -> None
     - 데몬 스레드(_loop)를 시작
-    - _loop: 5분(300s)마다 체크
+    - _loop: check_interval초마다 체크 (기본 300s, 테스트 시 0.05 등 작은 값 사용)
         age = time.time() - _last_beat
         if age > stale_minutes * 60:
             print stale 경고
@@ -117,7 +117,7 @@ def main():
 
 **`tests/test_watchdog.py`**:
 
-1. `beat()` 직후 `start()` — stale 감지 전에 체크 타이머가 만료되지 않음 → `shutdown()` 호출 안 됨
-2. beat 없이 stale_minutes=0 (또는 매우 작은 값) → watchdog가 `shutdown()` 호출
+1. `beat()` 직후 `start(scheduler, stale_minutes=999, check_interval=0.05)` — stale 아님 → `shutdown()` 호출 안 됨
+2. beat 없이 `start(scheduler, stale_minutes=0, check_interval=0.05)` → watchdog가 즉시 `shutdown()` 호출
 3. `main()` 재시작 루프 — scheduler가 즉시 shutdown될 때 `restart_count` 증가 확인
 4. `restart_count >= 3` → `sys.exit(1)` 호출 확인 (`pytest.raises(SystemExit)`)

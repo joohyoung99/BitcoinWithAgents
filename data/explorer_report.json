@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-05-07T04:23:38.927125+00:00",
+  "timestamp": "2026-05-07T06:23:41.958994+00:00",
   "risk": "risk-on",
-  "summary": "현재 시장은 Risk-On 상태로 판단됩니다. ETF 자금의 순유입이 지속되고 있고, 연준의 기준금리 동결 기조 및 정상 범위의 펀딩비율 등 다수의 긍정적 조건이 충족되었습니다. 다만 투자 심리는 아직 중립 단계에 머물러 있어 신중한 접근이 요구됩니다.",
+  "summary": "현재 시장은 Risk-On 상태로 판단됩니다. ETF 자금은 3일 평균 순유입을 기록하고 있으며, 연준의 기준금리가 동결 기조를 유지하고 펀딩 레이트 또한 정상 범위에 있어 위험자산 선호 심리가 유효한 것으로 분석됩니다.",
   "macro": {
     "fed_funds_rate": 3.64,
     "rate_trend": "holding"
@@ -15,8 +15,8 @@
     "label": "Neutral"
   },
   "market": {
-    "funding_rate": 3.2e-05,
-    "open_interest": 31147.2373,
+    "funding_rate": 4.8e-05,
+    "open_interest": 31278.3334,
     "long_short_ratio": 1.0
   }
 }
