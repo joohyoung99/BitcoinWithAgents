@@ -120,3 +120,149 @@ def calc_sl_price(direction: str, entry: float, atr: float, regime: str) -> floa
 def calc_tp_price(direction: str, entry: float, atr: float, regime: str) -> float:
     mult = _TP_MULT.get(regime, 2.0)
     return entry + atr * mult if direction == "long" else entry - atr * mult
+
+
+SYMBOL = "BTCUSDT"
+PRODUCT_TYPE = "USDT-FUTURES"
+MARGIN_COIN = "USDT"
+
+
+def _bitget_post(client, endpoint: str, body: dict) -> dict | None:
+    import json as _json
+    rh = client.account.request_handler
+    body_str = _json.dumps(body)
+    try:
+        headers = rh._get_headers("POST", endpoint, "", body_str)
+        resp = rh.session.post(f"{rh.base_url}{endpoint}", headers=headers, data=body_str)
+        return resp.json()
+    except Exception as e:
+        print(f"[executor] POST {endpoint} failed: {e}")
+        return None
+
+
+def _qty_from_usdt(size_usdt: float, price: float, leverage: int) -> str:
+    qty = (size_usdt * leverage) / price
+    return f"{qty:.3f}"
+
+
+def place_limit_order(client, direction: str, size_usdt: float, price: float, leverage: int) -> dict | None:
+    side = "buy" if direction == "long" else "sell"
+    qty = _qty_from_usdt(size_usdt, price, leverage)
+    for attempt in range(3):
+        try:
+            resp = _bitget_post(client, "/api/v2/mix/order/place-order", {
+                "symbol": SYMBOL,
+                "productType": PRODUCT_TYPE,
+                "marginMode": "isolated",
+                "marginCoin": MARGIN_COIN,
+                "size": qty,
+                "price": str(price),
+                "side": side,
+                "orderType": "limit",
+                "leverage": str(leverage),
+            })
+            if resp and resp.get("code") == "00000":
+                return resp.get("data")
+            print(f"[executor] place_order attempt {attempt+1} failed: {resp}")
+        except Exception as e:
+            print(f"[executor] place_order attempt {attempt+1} exception: {e}")
+        if attempt < 2:
+            time.sleep(1)
+    return None
+
+
+def cancel_order(client, order_id: str) -> bool:
+    resp = _bitget_post(client, "/api/v2/mix/order/cancel-order", {
+        "symbol": SYMBOL,
+        "productType": PRODUCT_TYPE,
+        "orderId": order_id,
+    })
+    return bool(resp and resp.get("code") == "00000")
+
+
+def _calc_pnl(position: dict, close_price: float) -> float:
+    direction = position["direction"]
+    entry = position["entry_price"]
+    size_usdt = position["size_usdt"]
+    leverage = position["leverage"]
+    if direction == "long":
+        return size_usdt * leverage * (close_price - entry) / entry
+    return size_usdt * leverage * (entry - close_price) / entry
+
+
+def close_position_market(client, position: dict, reason: str, daily: dict, positions_data: dict) -> bool:
+    resp = _bitget_post(client, "/api/v2/mix/order/flash-close-positions", {
+        "symbol": SYMBOL,
+        "productType": PRODUCT_TYPE,
+        "holdSide": position["direction"],
+    })
+    if not resp or resp.get("code") != "00000":
+        print(f"[executor] flash_close failed: {resp}")
+        return False
+
+    now = datetime.now(UTC).isoformat()
+    close_price = position.get("tp_price" if reason == "TP" else "sl_price", 0.0)
+    pnl = _calc_pnl(position, close_price)
+
+    append_trade({
+        "opened_at": position["opened_at"],
+        "closed_at": now,
+        "direction": position["direction"],
+        "regime": position["regime"],
+        "leverage": position["leverage"],
+        "entry_price": position["entry_price"],
+        "close_price": close_price,
+        "size_usdt": position["size_usdt"],
+        "sl_price": position["sl_price"],
+        "tp_price": position["tp_price"],
+        "realized_pnl_usdt": round(pnl, 4),
+        "close_reason": reason,
+        "atr_at_entry": position["atr_at_entry"],
+    })
+
+    daily["daily_pnl_usdt"] = round(daily.get("daily_pnl_usdt", 0.0) + pnl, 4)
+    daily["trade_count"] = daily.get("trade_count", 0) + 1
+    if pnl >= 0:
+        daily["wins"] = daily.get("wins", 0) + 1
+        daily["consecutive_losses"] = 0
+    else:
+        daily["losses"] = daily.get("losses", 0) + 1
+        daily["consecutive_losses"] = daily.get("consecutive_losses", 0) + 1
+
+    positions_data["positions"] = [
+        p for p in positions_data["positions"] if p["order_id"] != position["order_id"]
+    ]
+    return True
+
+
+def place_stop_loss_with_emergency(client, position: dict) -> bool:
+    """Submit exchange-side SL. On 3 failures → emergency market close."""
+    hold_side = position["direction"]
+    sl_price = position["sl_price"]
+    for attempt in range(3):
+        try:
+            resp = _bitget_post(client, "/api/v2/mix/order/place-tpsl-order", {
+                "symbol": SYMBOL,
+                "productType": PRODUCT_TYPE,
+                "marginCoin": MARGIN_COIN,
+                "planType": "loss_plan",
+                "triggerPrice": str(sl_price),
+                "holdSide": hold_side,
+                "size": "0",
+                "triggerType": "mark_price",
+            })
+            if resp and resp.get("code") == "00000":
+                return True
+            print(f"[executor] SL attempt {attempt+1} failed: {resp}")
+        except Exception as e:
+            print(f"[executor] SL attempt {attempt+1} exception: {e}")
+        if attempt < 2:
+            time.sleep(1)
+
+    print("[executor] SL all retries failed — emergency market close")
+    _bitget_post(client, "/api/v2/mix/order/flash-close-positions", {
+        "symbol": SYMBOL,
+        "productType": PRODUCT_TYPE,
+        "holdSide": hold_side,
+    })
+    return False

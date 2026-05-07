@@ -106,3 +106,69 @@ def test_get_leverage():
     assert get_leverage("caution", "long") == 3
     assert get_leverage("caution", "short") == 2
     assert get_leverage("risk_off_trend", "short") == 2
+
+
+def test_place_entry_retry_succeeds_on_third():
+    from src.executor import place_limit_order
+
+    mock_client = MagicMock()
+
+    with patch("src.executor._bitget_post") as mock_post, \
+         patch("src.executor.time.sleep"):
+        mock_post.side_effect = [
+            {"code": "50001", "msg": "error"},
+            {"code": "50001", "msg": "error"},
+            {"code": "00000", "data": {"orderId": "abc123", "size": "0.02"}},
+        ]
+        result = place_limit_order(mock_client, "long", 1000.0, 50000.0, 5)
+
+    assert result is not None
+    assert result["orderId"] == "abc123"
+    assert mock_post.call_count == 3
+
+
+def test_place_entry_all_retries_fail():
+    from src.executor import place_limit_order
+
+    mock_client = MagicMock()
+
+    with patch("src.executor._bitget_post") as mock_post, \
+         patch("src.executor.time.sleep"):
+        mock_post.return_value = {"code": "50001", "msg": "error"}
+        result = place_limit_order(mock_client, "long", 1000.0, 50000.0, 5)
+
+    assert result is None
+    assert mock_post.call_count == 3
+
+
+def test_sl_failure_triggers_emergency_close():
+    from src.executor import place_stop_loss_with_emergency
+
+    mock_client = MagicMock()
+    position = {
+        "order_id": "abc",
+        "direction": "long",
+        "size_usdt": 1000.0,
+        "entry_price": 50000.0,
+        "sl_price": 48500.0,
+        "tp_price": 53000.0,
+        "sl_order_id": "",
+        "regime": "normal",
+        "leverage": 5,
+        "atr_at_entry": 1000.0,
+        "opened_at": "2026-05-07T00:00:00+00:00",
+    }
+
+    with patch("src.executor._bitget_post") as mock_post, \
+         patch("src.executor.time.sleep"):
+        # 3 SL retries fail, then emergency close succeeds
+        mock_post.side_effect = [
+            {"code": "50001"},
+            {"code": "50001"},
+            {"code": "50001"},
+            {"code": "00000"},  # emergency flash_close
+        ]
+        result = place_stop_loss_with_emergency(mock_client, position)
+
+    assert result is False
+    assert mock_post.call_count == 4  # 3 SL + 1 emergency
