@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-05-07T02:22:57.922277+00:00",
+  "timestamp": "2026-05-07T04:23:38.927125+00:00",
   "risk": "risk-on",
-  "summary": "현재 시장은 Risk-On 상태로 판단됩니다. 공포-탐욕 지수는 중립이지만, ETF 자금의 대규모 순유입과 안정적인 펀딩레이트, 기준금리 동결 기조 등 3가지 조건이 충족되어 투자 심리가 긍정적인 것으로 분석됩니다.",
+  "summary": "현재 시장은 Risk-On 상태로 판단됩니다. ETF 자금의 순유입이 지속되고 있고, 연준의 기준금리 동결 기조 및 정상 범위의 펀딩비율 등 다수의 긍정적 조건이 충족되었습니다. 다만 투자 심리는 아직 중립 단계에 머물러 있어 신중한 접근이 요구됩니다.",
   "macro": {
     "fed_funds_rate": 3.64,
     "rate_trend": "holding"
   },
   "etf": {
-    "net_flow_3d": 1032071535.7199999,
+    "net_flow_3d": 922618734.6866666,
     "flow_signal": "inflow"
   },
   "fear_greed": {
@@ -15,8 +15,8 @@
     "label": "Neutral"
   },
   "market": {
-    "funding_rate": 2.3e-05,
-    "open_interest": 31151.8332,
+    "funding_rate": 3.2e-05,
+    "open_interest": 31147.2373,
     "long_short_ratio": 1.0
   }
 }

@@ -5,8 +5,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from google import genai
-
+from src.gemini import get_model
 from src.models import RegimeState
 
 STATE_PATH = Path("data/state.json")
@@ -67,11 +66,7 @@ def review_regime_with_gemini(
             signal_summary=signal_summary,
             regime=regime,
         )
-        client = genai.Client()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+        response = get_model("gemini-2.5-flash").generate_content(prompt)
         text = response.text.strip()
         if text.startswith("```"):
             text = text.split("```")[1]
@@ -89,8 +84,9 @@ def review_regime_with_gemini(
         if gemini_regime != regime:
             print(f"[regime] Gemini advisory disagrees: rule={regime} gemini={gemini_regime} — {comment}")
             return regime  # rule always wins
-
-        return regime
+        
+        print(f"[regime] Gemini advisory agrees: {gemini_regime}")
+        return regime        
     except Exception as e:
         print(f"[regime] Gemini review failed: {e} — using rule-based result")
         return regime

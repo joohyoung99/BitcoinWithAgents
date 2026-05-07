@@ -8,8 +8,8 @@ from pathlib import Path
 import pandas as pd
 import pandas_ta as ta
 import requests
-from google import genai
 
+from src.gemini import get_model
 from src.models import ChartSignal
 
 BITGET_BASE = "https://api.bitget.com"
@@ -150,11 +150,7 @@ def score_signal(df: pd.DataFrame, signal: str, trend_range: str) -> tuple[int, 
             trend_range=trend_range,
             candles_json=json.dumps(last10, ensure_ascii=False),
         )
-        client = genai.Client()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+        response = get_model("gemini-2.5-flash").generate_content(prompt)
         text = response.text.strip()
         if text.startswith("```"):
             text = text.split("```")[1]

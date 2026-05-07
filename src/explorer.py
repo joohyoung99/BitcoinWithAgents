@@ -8,8 +8,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import requests
-from google import genai
 
+from src.gemini import get_model
 from src.models import (
     ETFData,
     ExplorerReport,
@@ -257,12 +257,8 @@ def analyse(
     fear_greed: FearGreedData | None,
     market: MarketData | None,
 ) -> ExplorerReport:
-    client = genai.Client()
     prompt = _build_prompt(macro, etf, fear_greed, market)
-    response = client.models.generate_content(
-        model="gemini-2.5-pro",
-        contents=prompt,
-    )
+    response = get_model("gemini-2.5-pro").generate_content(prompt)
     text = response.text.strip()
     if text.startswith("```"):
         text = text.split("```")[1]

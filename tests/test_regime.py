@@ -54,9 +54,9 @@ def test_review_regime_gemini_agrees():
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.text = '{"regime": "normal", "comment": "EMA 정배열 확인"}'
-    mock_client.models.generate_content.return_value = mock_resp
+    mock_client.generate_content.return_value = mock_resp
 
-    with patch("src.regime.genai.Client", return_value=mock_client):
+    with patch("src.regime.get_model", return_value=mock_client):
         result = review_regime_with_gemini("normal", "trend", "risk-on", "EMA 상승중")
 
     assert result == "normal"
@@ -65,7 +65,7 @@ def test_review_regime_gemini_agrees():
 def test_review_regime_gemini_fails_returns_rule_regime():
     from src.regime import review_regime_with_gemini
 
-    with patch("src.regime.genai.Client", side_effect=Exception("API error")):
+    with patch("src.regime.get_model", side_effect=Exception("API error")):
         result = review_regime_with_gemini("caution", "range", "risk-on", "횡보")
 
     assert result == "caution"
@@ -94,9 +94,9 @@ def test_run_regime_once_writes_state(tmp_path, monkeypatch):
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.text = '{"regime": "normal", "comment": "정배열 확인"}'
-    mock_client.models.generate_content.return_value = mock_resp
+    mock_client.generate_content.return_value = mock_resp
 
-    with patch("src.regime.genai.Client", return_value=mock_client):
+    with patch("src.regime.get_model", return_value=mock_client):
         run_regime_once()
 
     result = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
@@ -129,9 +129,9 @@ def test_run_regime_once_detects_change(tmp_path, monkeypatch):
     mock_client = MagicMock()
     mock_resp = MagicMock()
     mock_resp.text = '{"regime": "normal", "comment": "정배열"}'
-    mock_client.models.generate_content.return_value = mock_resp
+    mock_client.generate_content.return_value = mock_resp
 
-    with patch("src.regime.genai.Client", return_value=mock_client):
+    with patch("src.regime.get_model", return_value=mock_client):
         run_regime_once()
 
     result = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))

@@ -162,9 +162,9 @@ def test_score_signal_returns_confidence_and_comment():
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.text = '{"confidence": 75, "comment": "Strong uptrend"}'
-    mock_client.models.generate_content.return_value = mock_response
+    mock_client.generate_content.return_value = mock_response
 
-    with patch("src.chart.genai.Client", return_value=mock_client):
+    with patch("src.chart.get_model", return_value=mock_client):
         confidence, comment = score_signal(_make_ohlcv(300), "long", "trend")
 
     assert confidence == 75
@@ -174,7 +174,7 @@ def test_score_signal_returns_confidence_and_comment():
 def test_score_signal_fallback_on_gemini_fail():
     from src.chart import score_signal
 
-    with patch("src.chart.genai.Client", side_effect=Exception("API error")):
+    with patch("src.chart.get_model", side_effect=Exception("API error")):
         confidence, comment = score_signal(_make_ohlcv(300), "long", "trend")
 
     assert confidence == 50
@@ -245,10 +245,10 @@ def test_run_chart_once_writes_state_json(tmp_path, monkeypatch):
     mock_gemini_client = MagicMock()
     mock_gemini_response = MagicMock()
     mock_gemini_response.text = '{"confidence": 70, "comment": "좋음"}'
-    mock_gemini_client.models.generate_content.return_value = mock_gemini_response
+    mock_gemini_client.generate_content.return_value = mock_gemini_response
 
     with patch("src.chart.requests.get", return_value=mock_resp), \
-         patch("src.chart.genai.Client", return_value=mock_gemini_client):
+         patch("src.chart.get_model", return_value=mock_gemini_client):
         run_chart_once()
 
     assert (tmp_path / "state.json").exists()
@@ -282,10 +282,10 @@ def test_run_chart_once_suppresses_low_confidence(tmp_path, monkeypatch):
     mock_gemini_client = MagicMock()
     mock_gemini_response = MagicMock()
     mock_gemini_response.text = '{"confidence": 40, "comment": "불확실"}'  # below 60
-    mock_gemini_client.models.generate_content.return_value = mock_gemini_response
+    mock_gemini_client.generate_content.return_value = mock_gemini_response
 
     with patch("src.chart.requests.get", return_value=mock_resp), \
-         patch("src.chart.genai.Client", return_value=mock_gemini_client):
+         patch("src.chart.get_model", return_value=mock_gemini_client):
         run_chart_once()
 
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
