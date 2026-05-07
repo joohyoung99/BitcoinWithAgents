@@ -179,3 +179,42 @@ def test_score_signal_fallback_on_gemini_fail():
 
     assert confidence == 50
     assert comment == "LLM unavailable"
+
+
+def test_update_state_writes_atomic_with_meta(tmp_path, monkeypatch):
+    from src.chart import update_state
+    from src.models import ChartSignal
+    import src.chart as chart_mod
+
+    monkeypatch.setattr(chart_mod, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(chart_mod, "REPORT_PATH", tmp_path / "explorer_report.json")
+
+    # write a fake explorer report
+    (tmp_path / "explorer_report.json").write_text(
+        json.dumps({"risk": "risk-on", "summary": "test summary"}),
+        encoding="utf-8",
+    )
+
+    sig = ChartSignal(
+        symbol="BTCUSDT",
+        updated_at="2026-05-06T12:00:00+00:00",
+        trend_range="trend",
+        adx=28.5,
+        rsi=52.3,
+        ema_aligned=True,
+        ema50_slope=0.002,
+        atr=1200.0,
+        entry_signal="long",
+        confidence=75,
+        signal_summary="EMA 정배열",
+    )
+    update_state(sig)
+
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert "meta" in state
+    assert state["meta"]["schema_version"] == 1
+    assert "updated_at" in state["meta"]
+    assert "BTCUSDT" in state
+    assert state["BTCUSDT"]["entry_signal"] == "long"
+    assert state["BTCUSDT"]["risk"] == "risk-on"
+    assert state["BTCUSDT"]["risk_summary"] == "test summary"

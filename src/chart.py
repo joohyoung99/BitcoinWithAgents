@@ -165,3 +165,50 @@ def score_signal(df: pd.DataFrame, signal: str, trend_range: str) -> tuple[int, 
         return int(parsed["confidence"]), str(parsed["comment"])
     except Exception:
         return 50, "LLM unavailable"
+
+
+def update_state(signal: ChartSignal) -> None:
+    # Load existing state (preserve other symbols)
+    state: dict = {}
+    if STATE_PATH.exists():
+        try:
+            state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+
+    # Read risk from explorer report
+    risk = "risk-off"
+    risk_summary = ""
+    if REPORT_PATH.exists():
+        try:
+            report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+            risk = report.get("risk", "risk-off")
+            risk_summary = report.get("summary", "")
+        except Exception:
+            pass
+
+    now_iso = datetime.now(UTC).isoformat()
+
+    state["meta"] = {
+        "schema_version": 1,
+        "updated_at": now_iso,
+    }
+    state[signal.symbol] = {
+        "updated_at": signal.updated_at,
+        "risk": risk,
+        "risk_summary": risk_summary,
+        "trend_range": signal.trend_range,
+        "adx": signal.adx,
+        "rsi": signal.rsi,
+        "ema_aligned": signal.ema_aligned,
+        "ema50_slope": signal.ema50_slope,
+        "atr": signal.atr,
+        "entry_signal": signal.entry_signal,
+        "confidence": signal.confidence,
+        "signal_summary": signal.signal_summary,
+    }
+
+    STATE_PATH.parent.mkdir(exist_ok=True)
+    tmp_path = STATE_PATH.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(str(tmp_path), str(STATE_PATH))
