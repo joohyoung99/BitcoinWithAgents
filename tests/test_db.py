@@ -49,5 +49,5 @@ def test_log_event_inserts_row():
 
 
 def test_log_api_does_not_raise_on_bad_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(db_mod, "DB_PATH", Path("/nonexistent_dir/bad.db"))
+    monkeypatch.setattr(db_mod, "DB_PATH", tmp_path / "nope" / "bad.db")
     db_mod.log_api("/test", {}, None, 0)  # must not raise

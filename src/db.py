@@ -9,7 +9,7 @@ DB_PATH = Path("data/trading.db")
 
 
 def init_db() -> None:
-    DB_PATH.parent.mkdir(exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript("""
@@ -50,7 +50,7 @@ def log_api(
     duration_ms: int,
 ) -> None:
     try:
-        status_code = (response_body or {}).get("code", "ERR") if response_body else "ERR"
+        status_code = (response_body or {}).get("code", "ERR")
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
