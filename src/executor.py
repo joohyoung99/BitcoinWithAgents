@@ -129,15 +129,23 @@ MARGIN_COIN = "USDT"
 
 def _bitget_post(client, endpoint: str, body: dict) -> dict | None:
     import json as _json
+    import time as _time
+    from src.db import log_api
     rh = client.account.request_handler
     body_str = _json.dumps(body)
+    t0 = _time.time()
+    result = None
     try:
         headers = rh._get_headers("POST", endpoint, "", body_str)
         resp = rh.session.post(f"{rh.base_url}{endpoint}", headers=headers, data=body_str)
-        return resp.json()
+        result = resp.json()
+        return result
     except Exception as e:
         print(f"[executor] POST {endpoint} failed: {e}")
         return None
+    finally:
+        duration_ms = int((_time.time() - t0) * 1000)
+        log_api(endpoint, body, result, duration_ms)
 
 
 def _qty_from_usdt(size_usdt: float, price: float, leverage: int) -> str:
