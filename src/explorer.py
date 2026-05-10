@@ -24,6 +24,7 @@ from src.models import (
     MacroData,
     MarketData,
 )
+from src.db import init_db, log_event
 from src.regime import run_regime_once
 from src.ws_monitor import run_ws_monitor
 
@@ -36,6 +37,19 @@ FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 SOSOVALUE_BASE = "https://openapi.sosovalue.com/openapi/v1"  # confirmed from API docs
 
 REPORT_PATH = Path("data/explorer_report.json")
+
+
+def _setup_logging() -> None:
+    import logging
+    Path("data").mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler("data/system.log", encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+    )
 
 
 def collect_fear_greed() -> FearGreedData | None:
@@ -312,12 +326,20 @@ def run_once() -> None:
             return
 
         save_report(report)
+        log_event(
+            "INFO", "explorer",
+            f"risk={report.risk}",
+            extra={"summary": report.summary, "timestamp": report.timestamp},
+        )
         print(f"[explorer] {report.timestamp} risk={report.risk}")
     except Exception as e:
         print(f"[explorer] run_once unexpected error: {e}")
 
 
 def main() -> None:
+    _setup_logging()
+    init_db()
+
     def _job_explorer() -> None:
         watchdog.beat()
         run_once()
