@@ -5,6 +5,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from src.db import log_event
 from src.gemini import get_model
 from src.models import RegimeState
 
@@ -185,6 +186,13 @@ def run_regime_once() -> None:
             regime_updated_at=datetime.now(UTC).isoformat(),
         )
         update_regime_state(rs)
+
+        if regime_changed:
+            log_event(
+                "INFO", "regime",
+                rs.regime_transition,
+                extra={"prev_regime": rs.prev_regime, "regime": rs.regime, "symbol": rs.symbol},
+            )
 
         change_str = f" [{regime_transition}]" if regime_changed else ""
         print(f"[regime] {rs.regime_updated_at} regime={regime}{change_str}")
