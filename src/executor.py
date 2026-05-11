@@ -348,6 +348,7 @@ def place_stop_loss_with_emergency(client, position: dict) -> bool:
     """Submit exchange-side SL. On 3 failures → emergency market close."""
     hold_side = position["direction"]
     sl_price = position["sl_price"]
+    btc_qty = _qty_from_usdt(position["size_usdt"], position["entry_price"], position["leverage"])
     for attempt in range(3):
         try:
             resp = _bitget_post(client, "/api/v2/mix/order/place-tpsl-order", {
@@ -355,9 +356,9 @@ def place_stop_loss_with_emergency(client, position: dict) -> bool:
                 "productType": PRODUCT_TYPE,
                 "marginCoin": MARGIN_COIN,
                 "planType": "loss_plan",
-                "triggerPrice": str(sl_price),
+                "triggerPrice": str(round(sl_price, 1)),
                 "holdSide": hold_side,
-                "size": "0",
+                "size": btc_qty,
                 "triggerType": "mark_price",
             })
             if resp and resp.get("code") == "00000":
@@ -388,6 +389,7 @@ def place_take_profit(client, position: dict) -> bool:
     """Submit exchange-side TP. Non-fatal — check_tp_hits acts as fallback."""
     hold_side = position["direction"]
     tp_price = position["tp_price"]
+    btc_qty = _qty_from_usdt(position["size_usdt"], position["entry_price"], position["leverage"])
     for attempt in range(3):
         try:
             resp = _bitget_post(client, "/api/v2/mix/order/place-tpsl-order", {
@@ -395,9 +397,9 @@ def place_take_profit(client, position: dict) -> bool:
                 "productType": PRODUCT_TYPE,
                 "marginCoin": MARGIN_COIN,
                 "planType": "profit_plan",
-                "triggerPrice": str(round(tp_price, 2)),
+                "triggerPrice": str(round(tp_price, 1)),
                 "holdSide": hold_side,
-                "size": "0",
+                "size": btc_qty,
                 "triggerType": "mark_price",
             })
             if resp and resp.get("code") == "00000":
@@ -500,6 +502,7 @@ def _tighten_sl(client, pos: dict, atr: float) -> None:
     entry = pos["entry_price"]
     new_sl = entry - atr * mult if pos["direction"] == "long" else entry + atr * mult
 
+    btc_qty = _qty_from_usdt(pos["size_usdt"], pos["entry_price"], pos["leverage"])
     for attempt in range(3):
         try:
             resp = _bitget_post(client, "/api/v2/mix/order/place-tpsl-order", {
@@ -507,9 +510,9 @@ def _tighten_sl(client, pos: dict, atr: float) -> None:
                 "productType": PRODUCT_TYPE,
                 "marginCoin": MARGIN_COIN,
                 "planType": "loss_plan",
-                "triggerPrice": str(round(new_sl, 2)),
+                "triggerPrice": str(round(new_sl, 1)),
                 "holdSide": pos["direction"],
-                "size": "0",
+                "size": btc_qty,
                 "triggerType": "mark_price",
             })
             if resp and resp.get("code") == "00000":
