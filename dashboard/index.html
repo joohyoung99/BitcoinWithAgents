@@ -324,13 +324,13 @@ function applyPositions(p) {
   }
   tbody.innerHTML = list.map(pos => `
     <tr>
-      <td class="dir-${pos.direction}">${pos.direction?.toUpperCase() || '—'}</td>
+      <td class="dir-${escHtml(pos.direction || '')}">${escHtml(pos.direction?.toUpperCase() || '—')}</td>
       <td>${pos.leverage || '—'}x</td>
       <td>$${pos.entry_price ? Number(pos.entry_price).toLocaleString() : '—'}</td>
       <td>$${pos.sl_price   ? Number(pos.sl_price).toLocaleString()    : '—'}</td>
       <td>$${pos.tp_price   ? Number(pos.tp_price).toLocaleString()    : '—'}</td>
       <td>${pos.size_usdt   ? fmt(pos.size_usdt, 0) + ' U'             : '—'}</td>
-      <td>${pos.regime      || '—'}</td>
+      <td>${escHtml(pos.regime || '—')}</td>
     </tr>`).join('');
 }
 
