@@ -703,10 +703,11 @@ def run_executor_once() -> None:
         sl_price = calc_sl_price(direction, current_price, atr, regime)
         tp_price = calc_tp_price(direction, current_price, atr, regime)
 
-        # 9. Place market entry — SL/TP 주문과 동시 등록 (presetStopLossPrice)
+        # 9. Place market entry — preset SL만 등록 (TP는 체결 후 실제 체결가 기준으로 별도 등록)
+        # presetStopSurplusPrice는 stale close 가격 기반이라 현재가 역전 시 40832 에러 발생
         order_result = place_market_entry(
             client, direction, size_usdt, current_price, leverage,
-            sl_price=sl_price, tp_price=tp_price,
+            sl_price=sl_price,
         )
         if not order_result:
             print("[executor] entry order failed after retries — skip")
