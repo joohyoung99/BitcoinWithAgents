@@ -76,7 +76,7 @@ def determine_trend_range(df: pd.DataFrame, prev_trend_range: str) -> str:
     adx = float(df["ADX_14"].iloc[-1])
     slope = float(df["ema50_slope"].iloc[-1])
 
-    if adx > 25 and slope > 0:
+    if adx > 25:
         return "trend"
     if prev_trend_range == "trend" and adx > 22:
         return "trend"
@@ -106,7 +106,7 @@ def determine_entry(df: pd.DataFrame, trend_range: str, risk: str) -> str:
                 return "short"
             return "none"
         # Normal: trend + risk-on
-        if ema20 > ema50 > ema200 and ema50 <= close <= ema20 and 40 <= rsi <= 60:
+        if ema20 > ema50 > ema200 and ema50 <= close <= ema20 and 35 <= rsi <= 65:
             return "long"
         if ema20 < ema50 < ema200:
             return "short"
@@ -199,6 +199,7 @@ def update_state(signal: ChartSignal) -> None:
         "ema_aligned": signal.ema_aligned,
         "ema50_slope": signal.ema50_slope,
         "atr": signal.atr,
+        "close": signal.close,
         "entry_signal": signal.entry_signal,
         "confidence": signal.confidence,
         "signal_summary": signal.signal_summary,
@@ -275,6 +276,7 @@ def run_chart_once() -> None:
             ema_aligned=bool(row["EMA_20"] > row["EMA_50"] > row["EMA_200"]),
             ema50_slope=round(float(df["ema50_slope"].iloc[-1]), 6),
             atr=round(float(row["ATRr_14"]), 4),
+            close=round(float(row["close"]), 2),
             entry_signal=entry_signal,
             confidence=confidence,
             signal_summary=comment,

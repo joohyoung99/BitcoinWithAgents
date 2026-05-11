@@ -27,7 +27,7 @@ def classify_regime(trend_range: str, risk: str) -> str:
 
 
 _REGIME_PROMPT = """\
-You are a BTC/USDT futures trading regime advisor.
+You are a aggressive BTC/USDT futures trading regime advisor.
 Review the rule-based regime classification and confirm or suggest an alternative.
 
 ## Market State

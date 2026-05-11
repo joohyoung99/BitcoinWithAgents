@@ -1,29 +1,36 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+import os
 import time
-from pathlib import Path
 
-DB_PATH = Path("data/trading.db")
+import psycopg2
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+
+def _connect():
+    return psycopg2.connect(DATABASE_URL)
 
 
 def init_db() -> None:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript("""
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS api_logs (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                id            SERIAL PRIMARY KEY,
                 timestamp     TEXT NOT NULL,
                 endpoint      TEXT NOT NULL,
                 request_json  TEXT,
                 response_json TEXT,
                 status_code   TEXT,
                 duration_ms   INTEGER
-            );
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS llm_logs (
-                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                id             SERIAL PRIMARY KEY,
                 timestamp      TEXT NOT NULL,
                 module         TEXT NOT NULL,
                 model          TEXT NOT NULL,
@@ -31,16 +38,22 @@ def init_db() -> None:
                 response_text  TEXT,
                 duration_ms    INTEGER,
                 success        INTEGER NOT NULL DEFAULT 1
-            );
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS events (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 timestamp  TEXT NOT NULL,
                 level      TEXT NOT NULL,
                 module     TEXT NOT NULL,
                 message    TEXT NOT NULL,
                 extra_json TEXT
-            );
+            )
         """)
+        conn.commit()
+        cur.close()
+    finally:
+        conn.close()
 
 
 def log_api(
@@ -51,12 +64,13 @@ def log_api(
 ) -> None:
     try:
         status_code = (response_body or {}).get("code", "ERR")
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute(
+        conn = _connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
                 "INSERT INTO api_logs "
                 "(timestamp, endpoint, request_json, response_json, status_code, duration_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "VALUES (%s, %s, %s, %s, %s, %s)",
                 (
                     time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     endpoint,
@@ -66,6 +80,10 @@ def log_api(
                     duration_ms,
                 ),
             )
+            conn.commit()
+            cur.close()
+        finally:
+            conn.close()
     except Exception as e:
         print(f"[db] log_api failed: {e}")
 
@@ -79,12 +97,13 @@ def log_llm(
     success: bool = True,
 ) -> None:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute(
+        conn = _connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
                 "INSERT INTO llm_logs "
                 "(timestamp, module, model, prompt_preview, response_text, duration_ms, success) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (
                     time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     module,
@@ -95,6 +114,10 @@ def log_llm(
                     1 if success else 0,
                 ),
             )
+            conn.commit()
+            cur.close()
+        finally:
+            conn.close()
     except Exception as e:
         print(f"[db] log_llm failed: {e}")
 
@@ -106,11 +129,12 @@ def log_event(
     extra: dict | None = None,
 ) -> None:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute(
+        conn = _connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
                 "INSERT INTO events (timestamp, level, module, message, extra_json) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "VALUES (%s, %s, %s, %s, %s)",
                 (
                     time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     level,
@@ -119,5 +143,9 @@ def log_event(
                     json.dumps(extra, ensure_ascii=False) if extra is not None else None,
                 ),
             )
+            conn.commit()
+            cur.close()
+        finally:
+            conn.close()
     except Exception as e:
         print(f"[db] log_event failed: {e}")

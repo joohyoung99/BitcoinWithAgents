@@ -1,26 +1,26 @@
 {
   "BTCUSDT": {
-    "updated_at": "2026-05-07T07:28:35.416576+00:00",
+    "updated_at": "2026-05-11T00:11:31.846118+00:00",
     "risk": "risk-on",
-    "risk_summary": "현재 시장은 Risk-On 상태로 판단됩니다. ETF 자금은 3일 평균 순유입을 기록하고 있으며, 연준의 기준금리가 동결 기조를 유지하고 펀딩 레이트 또한 정상 범위에 있어 위험자산 선호 심리가 유효한 것으로 분석됩니다.",
+    "risk_summary": "연준의 금리 인하 기조와 ETF 시장으로의 지속적인 자금 순유입(3일 평균 5.7억 달러)이 Risk-On 조건 2가지를 충족합니다. 투자 심리는 중립(48) 상태에 머물러 있으나, 거시 경제 환경과 기관의 자금 흐름이 우호적이므로 시장을 Risk-On 상태로 분석합니다.",
     "trend_range": "range",
-    "adx": 16.4657,
-    "rsi": 56.0594,
-    "ema_aligned": false,
-    "ema50_slope": 6.2e-05,
-    "atr": 136.898,
+    "adx": 18.8214,
+    "rsi": 58.7326,
+    "ema_aligned": true,
+    "ema50_slope": 0.000349,
+    "atr": 253.9232,
     "entry_signal": "none",
-    "confidence": 95,
-    "signal_summary": "시장 데이터는 낮은 ADX와 횡보하는 이동평균선, 그리고 제한된 가격 변동으로 보아 횡보장임을 강하게 지지합니다.",
+    "confidence": 90,
+    "signal_summary": "낮은 ADX 값과 제한적인 가격 변동폭, 그리고 중립적인 RSI는 시장이 횡보 범위에 있음을 강하게 시사합니다.",
     "regime": "caution",
     "prev_regime": "halt",
     "regime_changed": true,
     "regime_transition": "HALT_TO_CAUTION",
-    "regime_summary": "시장 데이터는 낮은 ADX와 횡보하는 이동평균선, 그리고 제한된 가격 변동으로 보아 횡보장임을 강하게 지지합니다.",
-    "regime_updated_at": "2026-05-07T07:28:41.271591+00:00"
+    "regime_summary": "낮은 ADX 값과 제한적인 가격 변동폭, 그리고 중립적인 RSI는 시장이 횡보 범위에 있음을 강하게 시사합니다.",
+    "regime_updated_at": "2026-05-11T00:11:41.573449+00:00"
   },
   "meta": {
     "schema_version": 1,
-    "updated_at": "2026-05-07T07:28:35.416576+00:00"
+    "updated_at": "2026-05-11T00:11:31.847125+00:00"
   }
 }

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,9 +8,9 @@ import src.db as db_mod
 
 
 @pytest.fixture(autouse=True)
-def use_tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(db_mod, "DB_PATH", tmp_path / "test.db")
+def use_fake_db(patch_db):
     db_mod.init_db()
+    return patch_db
 
 
 def _make_client(json_return=None, side_effect=None):
@@ -28,26 +27,26 @@ def _make_client(json_return=None, side_effect=None):
     return mock_client
 
 
-def test_bitget_post_logs_api_on_success():
+def test_bitget_post_logs_api_on_success(patch_db):
     client = _make_client(json_return={"code": "00000", "data": {}})
     from src.executor import _bitget_post
     result = _bitget_post(client, "/api/v2/mix/order/place-order", {"symbol": "BTCUSDT"})
 
     assert result == {"code": "00000", "data": {}}
-    conn = sqlite3.connect(db_mod.DB_PATH)
-    row = conn.execute("SELECT endpoint, status_code FROM api_logs").fetchone()
-    conn.close()
-    assert row == ("/api/v2/mix/order/place-order", "00000")
+    inserts = [(sql, params) for sql, params in patch_db if "INSERT INTO api_logs" in sql]
+    assert inserts
+    _, params = inserts[0]
+    assert "/api/v2/mix/order/place-order" in params
+    assert "00000" in params
 
 
-def test_bitget_post_logs_api_on_failure():
+def test_bitget_post_logs_api_on_failure(patch_db):
     client = _make_client(side_effect=ConnectionError("timeout"))
     from src.executor import _bitget_post
     result = _bitget_post(client, "/api/v2/mix/order/place-order", {"symbol": "BTCUSDT"})
 
     assert result is None
-    conn = sqlite3.connect(db_mod.DB_PATH)
-    row = conn.execute("SELECT endpoint, status_code FROM api_logs").fetchone()
-    conn.close()
-    assert row is not None
-    assert row[1] == "ERR"
+    inserts = [(sql, params) for sql, params in patch_db if "INSERT INTO api_logs" in sql]
+    assert inserts
+    _, params = inserts[0]
+    assert "ERR" in params

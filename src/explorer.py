@@ -182,7 +182,7 @@ def collect_etf() -> ETFData | None:
             timeout=10,
         )
         resp.raise_for_status()
-        flows = resp.json()[:3]
+        flows = resp.json()["data"][:3]
 
         # Support both the mock field name ("netFlow") and the real API field
         # name ("total_net_inflow") so unit tests and live calls both work.
@@ -338,7 +338,10 @@ def run_once() -> None:
 
 def main() -> None:
     _setup_logging()
-    init_db()
+    try:
+        init_db()
+    except Exception as e:
+        print(f"[explorer] DB init failed (DB logging disabled): {e}")
 
     def _job_explorer() -> None:
         watchdog.beat()

@@ -47,6 +47,7 @@ class ChartSignal:
     ema_aligned: bool       # EMA20 > EMA50 > EMA200
     ema50_slope: float      # positive=up, negative=down
     atr: float
+    close: float            # latest close price
     entry_signal: str       # "long" | "short" | "none"
     confidence: int         # 0–100
     signal_summary: str

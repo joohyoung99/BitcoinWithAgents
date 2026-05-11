@@ -123,11 +123,11 @@ def test_collect_etf_returns_data():
     from src.explorer import collect_etf
 
     mock_resp = MagicMock()
-    mock_resp.json.return_value = [
+    mock_resp.json.return_value = {"data": [
         {"date": "2024-03-03", "netFlow": 500_000_000},
         {"date": "2024-03-02", "netFlow": 300_000_000},
         {"date": "2024-03-01", "netFlow": -100_000_000},
-    ]
+    ]}
 
     with patch.dict(os.environ, {"SOSOVALUE_API_KEY": "testkey"}), \
          patch("src.explorer.requests.get", return_value=mock_resp):
@@ -250,6 +250,7 @@ def test_main_exits_after_max_restarts(monkeypatch):
     mock_scheduler.start.return_value = None  # returns immediately — triggers restart
 
     with patch("src.explorer.BlockingScheduler", return_value=mock_scheduler), \
+         patch("src.explorer.init_db"), \
          patch("src.explorer.run_once"), \
          patch("src.explorer.run_chart_once"), \
          patch("src.explorer.run_regime_once"), \

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import sqlite3
 from unittest.mock import patch
+
+import pytest
 
 import src.db as db_mod
 from src.models import ExplorerReport, FearGreedData, MarketData
 
 
-def test_run_once_logs_risk_event(tmp_path, monkeypatch):
-    monkeypatch.setattr(db_mod, "DB_PATH", tmp_path / "test.db")
+def test_run_once_logs_risk_event(tmp_path, patch_db, monkeypatch):
     db_mod.init_db()
 
     import src.explorer as explorer_mod
@@ -33,10 +33,9 @@ def test_run_once_logs_risk_event(tmp_path, monkeypatch):
          patch("src.explorer.analyse", return_value=report):
         explorer_mod.run_once()
 
-    conn = sqlite3.connect(db_mod.DB_PATH)
-    row = conn.execute("SELECT level, module, message FROM events").fetchone()
-    conn.close()
-    assert row is not None
-    assert row[0] == "INFO"
-    assert row[1] == "explorer"
-    assert "risk-on" in row[2]
+    inserts = [(sql, params) for sql, params in patch_db if "INSERT INTO events" in sql]
+    assert inserts
+    _, params = inserts[0]
+    assert "INFO" in params
+    assert "explorer" in params
+    assert any("risk-on" in str(p) for p in params)
