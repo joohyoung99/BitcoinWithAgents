@@ -255,9 +255,9 @@ def place_market_entry(
         "leverage": str(leverage),
     }
     if sl_price > 0:
-        body["presetStopLossPrice"] = str(round(sl_price, 2))
+        body["presetStopLossPrice"] = str(round(sl_price, 1))
     if tp_price > 0:
-        body["presetStopSurplusPrice"] = str(round(tp_price, 2))
+        body["presetStopSurplusPrice"] = str(round(tp_price, 1))
 
     for attempt in range(3):
         try:
