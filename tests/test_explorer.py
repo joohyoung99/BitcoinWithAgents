@@ -250,7 +250,6 @@ def test_main_exits_after_max_restarts(monkeypatch):
     mock_scheduler.start.return_value = None  # returns immediately — triggers restart
 
     with patch("src.explorer.BlockingScheduler", return_value=mock_scheduler), \
-         patch("src.explorer.init_db"), \
          patch("src.explorer.run_once"), \
          patch("src.explorer.run_chart_once"), \
          patch("src.explorer.run_regime_once"), \

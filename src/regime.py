@@ -5,7 +5,6 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from src.db import log_event
 from src.gemini import get_model
 from src.models import RegimeState
 
@@ -21,14 +20,21 @@ _REGIME_TABLE: dict[tuple[str, str], str] = {
     ("range", "risk-off"): "halt",
 }
 
+_REGIME_AGGRESSIVENESS = {
+    "normal": 4,
+    "caution": 3,
+    "risk_off_trend": 2,
+    "halt": 1,
+}
+
 
 def classify_regime(trend_range: str, risk: str) -> str:
     return _REGIME_TABLE.get((trend_range, risk), "halt")
 
 
 _REGIME_PROMPT = """\
-You are a aggressive BTC/USDT futures trading regime advisor.
-Review the rule-based regime classification and confirm or suggest an alternative.
+You are an AGGRESSIVE BTC/USDT futures trading regime advisor.
+Your goal is to MAXIMIZE trading opportunities. Review the rule-based regime and suggest the most aggressive viable alternative.
 
 ## Market State
 - trend_range: {trend_range}
@@ -38,14 +44,17 @@ Review the rule-based regime classification and confirm or suggest an alternativ
 ## Rule-Based Classification
 - proposed_regime: {regime}
 
-## Regime Definitions
-- normal: Trend + Risk-On → EMA Pullback long (5x) or short (3x)
+## Regime Definitions (aggressiveness: normal > caution > risk_off_trend > halt)
+- normal: Trend + Risk-On → EMA Pullback long (5x) or short (3x) — MOST AGGRESSIVE
 - caution: Range + Risk-On → BBands Mean Reversion long (3x) or short (2x)
 - risk_off_trend: Trend + Risk-Off → Short only (2x)
-- halt: Range + Risk-Off → No new trades
+- halt: Range + Risk-Off → No new trades — MOST CONSERVATIVE
 
 ## Instructions
-- Review if the proposed regime matches the market state.
+- You are BIASED toward more aggressive regimes (normal > caution > risk_off_trend > halt).
+- If there is ANY reasonable argument for a more aggressive regime, choose it.
+- Prefer "normal" or "caution" over "risk_off_trend" or "halt" unless danger signals are overwhelming.
+- Only choose "halt" if the market is genuinely dangerous with multiple confirmed risk signals.
 - Return ONLY valid JSON, no markdown, no explanation outside JSON.
 
 ## Output Schema (strict)
@@ -83,11 +92,20 @@ def review_regime_with_gemini(
             return regime
 
         if gemini_regime != regime:
-            print(f"[regime] Gemini advisory disagrees: rule={regime} gemini={gemini_regime} — {comment}")
-            return regime  # rule always wins
-        
+            gemini_agg = _REGIME_AGGRESSIVENESS.get(gemini_regime, 0)
+            rule_agg = _REGIME_AGGRESSIVENESS.get(regime, 0)
+
+            if gemini_agg > rule_agg:
+                # Gemini suggests more aggressive regime — adopt it
+                print(f"[regime] Gemini override (more aggressive): rule={regime} → gemini={gemini_regime} — {comment}")
+                return gemini_regime
+            else:
+                # Gemini suggests more conservative — keep rule-based
+                print(f"[regime] Gemini advisory (more conservative, ignored): rule={regime} gemini={gemini_regime} — {comment}")
+                return regime
+
         print(f"[regime] Gemini advisory agrees: {gemini_regime}")
-        return regime        
+        return regime
     except Exception as e:
         print(f"[regime] Gemini review failed: {e} — using rule-based result")
         return regime
@@ -187,15 +205,10 @@ def run_regime_once() -> None:
         )
         update_regime_state(rs)
 
-        if regime_changed:
-            log_event(
-                "INFO", "regime",
-                rs.regime_transition,
-                extra={"prev_regime": rs.prev_regime, "regime": rs.regime, "symbol": rs.symbol},
-            )
-
         change_str = f" [{regime_transition}]" if regime_changed else ""
-        print(f"[regime] {rs.regime_updated_at} regime={regime}{change_str}")
+        print(
+            f"[regime] regime={regime} risk={sym.get('risk','?')} trend={sym.get('trend_range','?')}{change_str}"
+        )
 
     except Exception as e:
         print(f"[regime] run_regime_once error: {e}")

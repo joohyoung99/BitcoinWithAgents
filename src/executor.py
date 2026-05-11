@@ -129,23 +129,85 @@ MARGIN_COIN = "USDT"
 
 def _bitget_post(client, endpoint: str, body: dict) -> dict | None:
     import json as _json
-    import time as _time
-    from src.db import log_api
     rh = client.account.request_handler
     body_str = _json.dumps(body)
-    t0 = _time.time()
-    result = None
     try:
         headers = rh._get_headers("POST", endpoint, "", body_str)
         resp = rh.session.post(f"{rh.base_url}{endpoint}", headers=headers, data=body_str)
-        result = resp.json()
-        return result
+        return resp.json()
     except Exception as e:
         print(f"[executor] POST {endpoint} failed: {e}")
         return None
-    finally:
-        duration_ms = int((_time.time() - t0) * 1000)
-        log_api(endpoint, body, result, duration_ms)
+
+
+def _bitget_get(client, endpoint: str, params: dict) -> dict | None:
+    import urllib.parse
+    rh = client.account.request_handler
+    query_string = urllib.parse.urlencode(params)
+    try:
+        headers = rh._get_headers("GET", endpoint, query_string, "")
+        resp = rh.session.get(f"{rh.base_url}{endpoint}", headers=headers, params=params)
+        return resp.json()
+    except Exception as e:
+        print(f"[executor] GET {endpoint} failed: {e}")
+        return None
+
+
+def sync_exchange_positions(client, positions_data: dict, atr: float, regime: str) -> None:
+    """거래소 실제 포지션을 positions.json에 동기화 (봇이 모르는 포지션 포함).
+
+    매 사이클마다 호출해도 안전 — synthetic_id 기반으로 중복 추가 방지.
+    """
+    resp = _bitget_get(client, "/api/v2/mix/position/all-position", {
+        "productType": PRODUCT_TYPE,
+        "marginCoin": MARGIN_COIN,
+    })
+    if not resp or resp.get("code") != "00000":
+        print(f"[executor] sync_exchange_positions failed: {resp}")
+        return
+
+    known_ids = {p.get("order_id", "") for p in positions_data["positions"]}
+
+    for ex_pos in resp.get("data", []):
+        if ex_pos.get("symbol") != SYMBOL:
+            continue
+        size = float(ex_pos.get("total", 0))
+        if size <= 0:
+            continue
+
+        hold_side = ex_pos.get("holdSide", "long")  # "long" | "short"
+        synthetic_id = f"synced_{SYMBOL}_{hold_side}"
+        if synthetic_id in known_ids:
+            continue
+
+        entry_price = float(ex_pos.get("openPriceAvg", 0) or 0)
+        if entry_price <= 0:
+            continue
+
+        leverage = int(float(ex_pos.get("leverage", 1) or 1))
+        size_usdt = round((size * entry_price) / leverage, 4)
+        sl_price = calc_sl_price(hold_side, entry_price, atr, regime) if atr > 0 else 0.0
+        tp_price = calc_tp_price(hold_side, entry_price, atr, regime) if atr > 0 else 0.0
+
+        record = {
+            "order_id": synthetic_id,
+            "direction": hold_side,
+            "size_usdt": size_usdt,
+            "entry_price": entry_price,
+            "sl_price": sl_price,
+            "tp_price": tp_price,
+            "sl_order_id": "",
+            "regime": regime,
+            "leverage": leverage,
+            "atr_at_entry": atr,
+            "opened_at": datetime.now(UTC).isoformat(),
+            "synced": True,
+        }
+        positions_data["positions"].append(record)
+        print(
+            f"[executor] synced exchange pos: {hold_side} {size} BTC"
+            f" entry={entry_price} sl={sl_price:.1f} tp={tp_price:.1f} id={synthetic_id}"
+        )
 
 
 def _qty_from_usdt(size_usdt: float, price: float, leverage: int) -> str:
@@ -153,7 +215,7 @@ def _qty_from_usdt(size_usdt: float, price: float, leverage: int) -> str:
     return f"{qty:.3f}"
 
 
-def place_limit_order(client, direction: str, size_usdt: float, price: float, leverage: int) -> dict | None:
+def place_market_entry(client, direction: str, size_usdt: float, price: float, leverage: int) -> dict | None:
     side = "buy" if direction == "long" else "sell"
     qty = _qty_from_usdt(size_usdt, price, leverage)
     for attempt in range(3):
@@ -164,10 +226,9 @@ def place_limit_order(client, direction: str, size_usdt: float, price: float, le
                 "marginMode": "isolated",
                 "marginCoin": MARGIN_COIN,
                 "size": qty,
-                "price": str(price),
                 "side": side,
                 "tradeSide": "open",
-                "orderType": "limit",
+                "orderType": "market",
                 "leverage": str(leverage),
             })
             if resp and resp.get("code") == "00000":
@@ -404,6 +465,10 @@ def run_executor_once() -> None:
 
         client = get_client()
 
+        # 2-1. 거래소 포지션 동기화 (봇이 모르는 포지션 흡수)
+        sync_exchange_positions(client, positions_data, atr, regime)
+        save_positions(positions_data)
+
         # 3. TP check (existing positions first)
         if positions_data["positions"] and current_price > 0:
             check_tp_hits(client, positions_data, daily, current_price)
@@ -429,8 +494,11 @@ def run_executor_once() -> None:
             return
 
         # 6. Entry signal check
+        print(
+            f"[executor] regime={regime} signal={entry_signal} close={current_price:.1f}"
+            f" atr={atr:.1f} positions={len(positions_data['positions'])}"
+        )
         if entry_signal == "none":
-            print("[executor] entry_signal=none — skip")
             return
 
         direction = entry_signal  # "long" | "short"
@@ -451,16 +519,16 @@ def run_executor_once() -> None:
         size_usdt = calc_trade_size(balance)
         leverage = get_leverage(regime, direction)
 
-        # 8. Place limit entry (3 retry)
-        order_result = place_limit_order(client, direction, size_usdt, current_price, leverage)
+        # 8. Place market entry (3 retry)
+        order_result = place_market_entry(client, direction, size_usdt, current_price, leverage)
         if not order_result:
             print("[executor] entry order failed after retries — skip")
             return
         order_id = str(order_result.get("orderId", ""))
 
-        # 9. Poll order fill via REST (30s, every 3s)
+        # 9. Poll order fill via REST (9s, every 3s — market fills fast)
         fill_data = None
-        for _ in range(10):
+        for _ in range(3):
             time.sleep(3)
             try:
                 detail = client.account.request_handler.request(
@@ -479,8 +547,7 @@ def run_executor_once() -> None:
                 continue
 
         if fill_data is None:
-            print(f"[executor] order {order_id} not filled in 30s — cancelling")
-            cancel_order(client, order_id)
+            print(f"[executor] order {order_id} not filled in 9s — skip")
             return
 
         entry_price = float(fill_data.get("priceAvg", current_price))

@@ -109,7 +109,7 @@ def test_get_leverage():
 
 
 def test_place_entry_retry_succeeds_on_third():
-    from src.executor import place_limit_order
+    from src.executor import place_market_entry
 
     mock_client = MagicMock()
 
@@ -120,7 +120,7 @@ def test_place_entry_retry_succeeds_on_third():
             {"code": "50001", "msg": "error"},
             {"code": "00000", "data": {"orderId": "abc123", "size": "0.02"}},
         ]
-        result = place_limit_order(mock_client, "long", 1000.0, 50000.0, 5)
+        result = place_market_entry(mock_client, "long", 1000.0, 50000.0, 5)
 
     assert result is not None
     assert result["orderId"] == "abc123"
@@ -128,14 +128,14 @@ def test_place_entry_retry_succeeds_on_third():
 
 
 def test_place_entry_all_retries_fail():
-    from src.executor import place_limit_order
+    from src.executor import place_market_entry
 
     mock_client = MagicMock()
 
     with patch("src.executor._bitget_post") as mock_post, \
          patch("src.executor.time.sleep"):
         mock_post.return_value = {"code": "50001", "msg": "error"}
-        result = place_limit_order(mock_client, "long", 1000.0, 50000.0, 5)
+        result = place_market_entry(mock_client, "long", 1000.0, 50000.0, 5)
 
     assert result is None
     assert mock_post.call_count == 3

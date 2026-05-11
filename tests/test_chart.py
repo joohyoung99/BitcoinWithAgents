@@ -178,7 +178,7 @@ def test_score_signal_fallback_on_gemini_fail():
     with patch("src.chart.get_model", side_effect=Exception("API error")):
         confidence, comment = score_signal(_make_ohlcv(300), "long", "trend")
 
-    assert confidence == 50
+    assert confidence == 70
     assert comment == "LLM unavailable"
 
 

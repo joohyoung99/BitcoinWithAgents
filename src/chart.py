@@ -86,7 +86,13 @@ def determine_trend_range(df: pd.DataFrame, prev_trend_range: str) -> str:
 
 
 def determine_entry(df: pd.DataFrame, trend_range: str, risk: str) -> str:
-    """Determine entry signal based on trend/range mode and risk regime."""
+    """Determine entry signal based on trend/range mode and risk regime.
+
+    Relaxed conditions for more aggressive trading:
+    - Trend long: EMA20 > EMA50 sufficient (EMA200 not required), wider price/RSI range
+    - Trend short: EMA20 < EMA50 sufficient
+    - Range: Bollinger Band touch margin expanded to 1.0%, RSI extremes added
+    """
     row = df.iloc[-1]
     close = float(row["close"])
     ema20 = float(row["EMA_20"])
@@ -95,27 +101,39 @@ def determine_entry(df: pd.DataFrame, trend_range: str, risk: str) -> str:
     rsi = float(row["RSI_14"])
     bbl = float(row["BBL_20_2.0_2.0"])
     bbu = float(row["BBU_20_2.0_2.0"])
+    macd_hist = float(row.get("MACDh_12_26_9", 0.0))
 
-    # Halt: range + risk-off
+    # Halt: range + risk-off → still no new trades
     if trend_range == "range" and risk == "risk-off":
         return "none"
 
     if trend_range == "trend":
         if risk == "risk-off":
-            if ema20 < ema50 < ema200:
+            # Short allowed if EMA20 < EMA50 (relaxed: EMA200 not required)
+            if ema20 < ema50:
                 return "short"
             return "none"
         # Normal: trend + risk-on
-        if ema20 > ema50 > ema200 and ema50 <= close <= ema20 and 35 <= rsi <= 65:
+        # Long: EMA20 > EMA50 sufficient, price near or below EMA20, RSI 25-75
+        if ema20 > ema50 and close <= ema20 * 1.005 and 25 <= rsi <= 75:
             return "long"
-        if ema20 < ema50 < ema200:
+        # Long alternative: strong RSI momentum with EMA support
+        if ema20 > ema50 and rsi > 50 and macd_hist > 0:
+            return "long"
+        # Short: EMA20 < EMA50 sufficient (relaxed from requiring EMA200)
+        if ema20 < ema50:
             return "short"
         return "none"
 
-    # Caution: range + risk-on (BB 상/하단 0.5% 근접 시 신호)
-    if close >= bbu * 0.998:
+    # Caution: range + risk-on (BB margin expanded from 0.2% to 1.0%)
+    if close >= bbu * 0.990:
         return "short"
-    if close <= bbl * 1.002:
+    if close <= bbl * 1.010:
+        return "long"
+    # RSI extreme as additional range signal
+    if rsi >= 70:
+        return "short"
+    if rsi <= 30:
         return "long"
     return "none"
 
@@ -160,7 +178,83 @@ def score_signal(df: pd.DataFrame, signal: str, trend_range: str) -> tuple[int, 
         parsed = json.loads(text.strip())
         return int(parsed["confidence"]), str(parsed["comment"])
     except Exception:
-        return 50, "LLM unavailable"
+        return 70, "LLM unavailable"
+
+
+_LLM_SIGNAL_PROMPT = """\
+You are an aggressive BTC/USDT futures trading AI.
+The rule-based system found NO entry signal, but you should independently evaluate the market.
+
+## Last 10 Candles (oldest→newest)
+{candles_json}
+
+## Current Market Context
+- trend_range: {trend_range}
+- risk: {risk}
+- ADX: {adx}
+- RSI: {rsi}
+- EMA alignment (20>50>200): {ema_aligned}
+- MACD histogram: {macd_hist}
+
+## Instructions
+- Evaluate if there is a viable trading opportunity that the rule-based system might have missed.
+- Be AGGRESSIVE — look for emerging trends, momentum shifts, or mean-reversion setups.
+- If you see any reasonable opportunity, suggest "long" or "short". Only return "none" if the market is truly directionless.
+- Return ONLY valid JSON, no markdown, no explanation outside JSON.
+
+## Output Schema (strict)
+{{"signal": "<long|short|none>", "confidence": <integer 0-100>, "comment": "<one sentence in Korean>"}}
+"""
+
+
+def llm_generate_signal(
+    df: pd.DataFrame, trend_range: str, risk: str,
+) -> tuple[str, int, str]:
+    """Ask LLM to independently evaluate market when rule-based gives no signal.
+
+    Returns (signal, confidence, comment). Signal is used only if confidence >= 75.
+    """
+    try:
+        cols = [
+            "close", "EMA_20", "EMA_50", "EMA_200",
+            "ADX_14", "RSI_14", "ATRr_14", "MACDh_12_26_9",
+        ]
+        available = [c for c in cols if c in df.columns]
+        last10 = df[available].tail(10).round(4).to_dict(orient="records")
+        row = df.iloc[-1]
+
+        prompt = _LLM_SIGNAL_PROMPT.format(
+            candles_json=json.dumps(last10, ensure_ascii=False),
+            trend_range=trend_range,
+            risk=risk,
+            adx=round(float(row["ADX_14"]), 2),
+            rsi=round(float(row["RSI_14"]), 2),
+            ema_aligned=bool(row["EMA_20"] > row["EMA_50"] > row["EMA_200"]),
+            macd_hist=round(float(row.get("MACDh_12_26_9", 0.0)), 4),
+        )
+        response = get_model("gemini-2.5-flash").generate_content(prompt)
+        text = response.text.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.rsplit("```", 1)[0]
+        parsed = json.loads(text.strip())
+        signal = str(parsed.get("signal", "none"))
+        confidence = int(parsed.get("confidence", 0))
+        comment = str(parsed.get("comment", ""))
+
+        if signal not in ("long", "short", "none"):
+            return "none", 0, "invalid LLM signal"
+
+        # Block long in risk-off trend
+        if risk == "risk-off" and trend_range == "trend" and signal == "long":
+            return "none", 0, "risk-off trend blocks long"
+
+        return signal, confidence, comment
+    except Exception as e:
+        print(f"[chart] LLM signal generation failed: {e}")
+        return "none", 0, "LLM unavailable"
 
 
 def update_state(signal: ChartSignal) -> None:
@@ -252,10 +346,17 @@ def run_chart_once() -> None:
         trend_range = determine_trend_range(df, prev_trend_range)
         entry_signal = determine_entry(df, trend_range, risk)
 
-        confidence, comment = score_signal(df, entry_signal, trend_range)
-        if confidence < 60:
-            entry_signal = "none"
-            comment = f"[suppressed confidence={confidence}] {comment}"
+        if entry_signal == "none":
+            # LLM override: ask Gemini for independent signal assessment
+            llm_signal, llm_conf, llm_comment = llm_generate_signal(df, trend_range, risk)
+            if llm_signal != "none" and llm_conf >= 75:
+                entry_signal = llm_signal
+                confidence, comment = llm_conf, f"[LLM override] {llm_comment}"
+                print(f"[chart] LLM override: signal={llm_signal} conf={llm_conf}")
+            else:
+                confidence, comment = 100, "no signal"
+        else:
+            confidence, comment = score_signal(df, entry_signal, trend_range)
 
         # Stale state.json check
         if prev_symbol:
@@ -289,7 +390,11 @@ def run_chart_once() -> None:
 
         update_state(signal)
         _consecutive_failures = 0
-        print(f"[chart] {signal.updated_at} trend={trend_range} signal={signal.entry_signal} conf={confidence}")
+        print(
+            f"[chart] trend={trend_range} signal={signal.entry_signal} conf={confidence}"
+            f" | close={signal.close:.1f} adx={signal.adx:.1f} rsi={signal.rsi:.1f}"
+            f" atr={signal.atr:.1f} ema_aligned={signal.ema_aligned}"
+        )
 
     except Exception as e:
         _consecutive_failures += 1

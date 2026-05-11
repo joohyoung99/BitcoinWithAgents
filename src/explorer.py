@@ -24,7 +24,6 @@ from src.models import (
     MacroData,
     MarketData,
 )
-from src.db import init_db, log_event
 from src.regime import run_regime_once
 from src.ws_monitor import run_ws_monitor
 
@@ -41,6 +40,8 @@ REPORT_PATH = Path("data/explorer_report.json")
 
 def _setup_logging() -> None:
     import logging
+    import sys
+
     Path("data").mkdir(exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -50,6 +51,44 @@ def _setup_logging() -> None:
             logging.StreamHandler(),
         ],
     )
+
+    # print() 출력도 system.log에 tee + 타임스탬프 prefix
+    class _Tee:
+        def __init__(self, stream, path: str) -> None:
+            self._term = stream
+            self._file = open(path, "a", encoding="utf-8")  # noqa: SIM115
+            self._at_line_start = True
+
+        def write(self, data: str) -> int:
+            import time as _time
+            out = []
+            for ch in data:
+                if self._at_line_start and ch != "\n":
+                    ts = _time.strftime("[%Y-%m-%d %H:%M:%S]")
+                    out.append(ts + " ")
+                    self._at_line_start = False
+                out.append(ch)
+                if ch == "\n":
+                    self._at_line_start = True
+            stamped = "".join(out)
+            try:
+                self._term.write(stamped)
+            except UnicodeEncodeError:
+                enc = getattr(self._term, "encoding", "utf-8") or "utf-8"
+                self._term.write(stamped.encode(enc, errors="replace").decode(enc))
+            self._file.write(stamped)
+            self._file.flush()
+            return len(data)
+
+        def flush(self) -> None:
+            self._term.flush()
+            self._file.flush()
+
+        def __getattr__(self, name: str):
+            return getattr(self._term, name)
+
+    sys.stdout = _Tee(sys.__stdout__, "data/system.log")
+    sys.stderr = _Tee(sys.__stderr__, "data/system.log")
 
 
 def collect_fear_greed() -> FearGreedData | None:
@@ -257,16 +296,21 @@ def _build_prompt(
 
     lines += [
         "",
-        "## Risk-On 조건 (Voting — 2개 이상 충족 시 Risk-On)",
-        "- Fear & Greed > 60",
+        "## 중요 지침",
+        "- 시장 참여를 최우선으로 하세요. 확실한 위험 신호가 없다면 반드시 Risk-On으로 판단하세요.",
+        "- 불확실한 경우 Risk-On이 기본값입니다. Risk-Off는 명백한 위험 상황에서만 선택하세요.",
+        "",
+        "## Risk-On 조건 (1개 이상 충족 시 Risk-On)",
+        "- Fear & Greed > 40",
         "- ETF 순유입 > 0 (3일 평균)",
-        "- Funding Rate 정상 범위 (0 ~ 0.01%)",
+        "- Funding Rate 정상 범위 (-0.05% ~ 0.05%)",
         "- 매크로 금리 동결/인하 기조",
         "",
-        "## Risk-Off 조건 (1개라도 충족 시 즉시 Risk-Off)",
-        "- Fear & Greed < 30",
-        "- ETF 자금 순유출 3일 연속",
-        "- Funding Rate 극단값 (> 0.1% 또는 < -0.05%)",
+        "## Risk-Off 조건 (아래 중 2개 이상 동시 충족 시에만 Risk-Off)",
+        "- Fear & Greed < 25",
+        "- ETF 자금 순유출 3일 연속 (3일 평균 순유입 < -5,000,000 USD)",
+        "- Funding Rate 극단값 (> 0.15% 또는 < -0.1%)",
+        "- 매크로 금리 인상 기조",
         "",
         "## 응답 형식 (JSON만 출력, 마크다운 코드블록 없이)",
         '{"risk": "risk-on" 또는 "risk-off", "summary": "한국어로 분석 요약 2~3문장"}',
@@ -326,11 +370,6 @@ def run_once() -> None:
             return
 
         save_report(report)
-        log_event(
-            "INFO", "explorer",
-            f"risk={report.risk}",
-            extra={"summary": report.summary, "timestamp": report.timestamp},
-        )
         print(f"[explorer] {report.timestamp} risk={report.risk}")
     except Exception as e:
         print(f"[explorer] run_once unexpected error: {e}")
@@ -338,16 +377,13 @@ def run_once() -> None:
 
 def main() -> None:
     _setup_logging()
-    try:
-        init_db()
-    except Exception as e:
-        print(f"[explorer] DB init failed (DB logging disabled): {e}")
 
     def _job_explorer() -> None:
         watchdog.beat()
         run_once()
 
     def _job_chain() -> None:
+
         watchdog.beat()
         run_chart_once()
         run_regime_once()
@@ -386,6 +422,8 @@ def main() -> None:
         except (KeyboardInterrupt, SystemExit):
             print("[explorer] shutdown requested")
             return
+        except Exception as e:
+            print(f"[explorer] scheduler crashed: {type(e).__name__}: {e}")
 
         restart_count += 1
         if restart_count >= MAX_RESTARTS:
@@ -393,7 +431,7 @@ def main() -> None:
             sys.exit(1)
 
         print(f"[explorer] restarting (attempt {restart_count})")
-        time.sleep(5)
+        time.sleep(30)
 
 
 if __name__ == "__main__":
