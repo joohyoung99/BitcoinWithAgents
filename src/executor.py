@@ -416,10 +416,41 @@ def place_take_profit(client, position: dict) -> bool:
     return False
 
 
+def _fetch_close_from_history(client, direction: str, opened_at: str) -> tuple[float, float]:
+    """Bitget 포지션 히스토리에서 실제 청산가와 실현손익 반환. 실패 시 (0.0, 0.0)."""
+    try:
+        resp = _bitget_get(client, "/api/v2/mix/position/history-position", {
+            "productType": PRODUCT_TYPE,
+            "symbol": SYMBOL,
+            "limit": "5",
+        })
+        if not resp or resp.get("code") != "00000":
+            return 0.0, 0.0
+        opened_ms = datetime.fromisoformat(opened_at).timestamp() * 1000
+        items = resp.get("data", {})
+        if isinstance(items, dict):
+            items = items.get("list", [])
+        for item in items:
+            if item.get("holdSide") != direction:
+                continue
+            if float(item.get("uTime", 0)) < opened_ms:
+                continue
+            close_price = float(item.get("closePriceAvg", 0) or 0)
+            realized_pnl = float(item.get("achievedProfits", 0) or 0)
+            if close_price > 0:
+                return close_price, realized_pnl
+    except Exception as e:
+        print(f"[executor] history fetch failed: {e}")
+    return 0.0, 0.0
+
+
 def reconcile_closed_positions(
     client, positions_data: dict, daily: dict, current_price: float
 ) -> None:
-    """거래소에서 SL/TP로 닫힌 포지션을 감지해 positions.json 정리 + trades.csv 기록."""
+    """거래소에서 닫힌 포지션을 감지해 positions.json 정리 + trades.csv 기록.
+
+    실제 청산가는 Bitget 히스토리 API에서 조회. 실패 시 현재가 기반 추정.
+    """
     if not positions_data["positions"]:
         return
 
@@ -442,18 +473,28 @@ def reconcile_closed_positions(
         direction = pos["direction"]
         tp = pos["tp_price"]
         sl = pos["sl_price"]
-        # 현재가 기준으로 TP/SL 중 어느 쪽이 체결됐는지 추정
-        if direction == "long":
-            close_price = tp if current_price >= tp * 0.995 else sl
-            reason = "TP" if current_price >= tp * 0.995 else "SL"
-        else:
-            close_price = tp if current_price <= tp * 1.005 else sl
-            reason = "TP" if current_price <= tp * 1.005 else "SL"
 
-        pnl = _calc_pnl(pos, close_price)
+        # 실제 청산가/손익 조회
+        close_price, realized_pnl = _fetch_close_from_history(client, direction, pos["opened_at"])
+        if close_price > 0:
+            pnl = realized_pnl
+            reason = "TP" if (
+                (direction == "long" and close_price >= tp * 0.995) or
+                (direction == "short" and close_price <= tp * 1.005)
+            ) else "SL"
+        else:
+            # 히스토리 조회 실패 시 현재가 기반 추정
+            if direction == "long":
+                close_price = tp if current_price >= tp * 0.995 else sl
+                reason = "TP" if current_price >= tp * 0.995 else "SL"
+            else:
+                close_price = tp if current_price <= tp * 1.005 else sl
+                reason = "TP" if current_price <= tp * 1.005 else "SL"
+            pnl = _calc_pnl(pos, close_price)
+
         print(
             f"[executor] exchange closed {direction} order={pos['order_id']}"
-            f" reason={reason} close≈{close_price:.1f} pnl={pnl:.2f}"
+            f" reason={reason} close={close_price:.1f} pnl={pnl:.2f}"
         )
         append_trade({
             "opened_at": pos["opened_at"],
@@ -727,3 +768,39 @@ def run_executor_once() -> None:
 
     except Exception as e:
         print(f"[executor] run_executor_once error: {e}")
+    finally:
+        _log_portfolio(client if "client" in dir() else None)
+
+
+INITIAL_BALANCE = 20_000.0
+
+
+def _log_portfolio(client) -> None:
+    """매 사이클 잔고·수익률 출력."""
+    try:
+        if client is None:
+            return
+        balance_data = client.account.get_accounts(PRODUCT_TYPE)
+        if balance_data.code != "00000" or not balance_data.data:
+            return
+        acc = balance_data.data[0]
+        equity = float(acc.get("equity", 0) or acc.get("available", 0))
+
+        # 미결제 손익
+        pos_resp = _bitget_get(client, "/api/v2/mix/position/all-position", {
+            "productType": PRODUCT_TYPE,
+            "marginCoin": MARGIN_COIN,
+        })
+        unrealized = 0.0
+        if pos_resp and pos_resp.get("code") == "00000":
+            for p in pos_resp.get("data", []):
+                if p.get("symbol") == SYMBOL:
+                    unrealized += float(p.get("unrealizedPL", 0) or 0)
+
+        ret_pct = (equity - INITIAL_BALANCE) / INITIAL_BALANCE * 100
+        print(
+            f"[portfolio] equity={equity:.2f} USDT  unrealized={unrealized:+.2f}"
+            f"  return={ret_pct:+.2f}%  (initial={INITIAL_BALANCE:.0f})"
+        )
+    except Exception as e:
+        print(f"[portfolio] log failed: {e}")
