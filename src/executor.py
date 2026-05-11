@@ -80,11 +80,11 @@ def append_trade(row: dict) -> None:
 _SL_MULT = {"normal": 1.5, "caution": 1.0, "risk_off_trend": 1.0}
 _TP_MULT = {"normal": 3.0, "caution": 2.0, "risk_off_trend": 2.0}
 _LEVERAGE = {
-    ("normal", "long"): 5,
-    ("normal", "short"): 3,
-    ("caution", "long"): 3,
-    ("caution", "short"): 2,
-    ("risk_off_trend", "short"): 2,
+    ("normal", "long"): 10,
+    ("normal", "short"): 5,
+    ("caution", "long"): 5,
+    ("caution", "short"): 3,
+    ("risk_off_trend", "short"): 3,
 }
 
 MAX_POSITIONS = 2
