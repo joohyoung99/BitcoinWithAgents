@@ -156,6 +156,7 @@ def _bitget_get(client, endpoint: str, params: dict) -> dict | None:
 def sync_exchange_positions(client, positions_data: dict, atr: float, regime: str) -> None:
     """거래소 실제 포지션을 positions.json에 동기화 (봇이 모르는 포지션 포함).
 
+    흡수된 포지션은 즉시 SL + TP 거래소 등록.
     매 사이클마다 호출해도 안전 — synthetic_id 기반으로 중복 추가 방지.
     """
     resp = _bitget_get(client, "/api/v2/mix/position/all-position", {
@@ -197,12 +198,17 @@ def sync_exchange_positions(client, positions_data: dict, atr: float, regime: st
             "sl_price": sl_price,
             "tp_price": tp_price,
             "sl_order_id": "",
+            "tp_order_id": "",
             "regime": regime,
             "leverage": leverage,
             "atr_at_entry": atr,
             "opened_at": datetime.now(UTC).isoformat(),
             "synced": True,
         }
+        # 흡수 즉시 SL + TP 거래소 등록
+        place_stop_loss_with_emergency(client, record)
+        place_take_profit(client, record)
+
         positions_data["positions"].append(record)
         print(
             f"[executor] synced exchange pos: {hold_side} {size} BTC"
