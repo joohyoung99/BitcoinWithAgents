@@ -138,7 +138,8 @@ def test_place_entry_all_retries_fail():
         result = place_market_entry(mock_client, "long", 1000.0, 50000.0, 5)
 
     assert result is None
-    assert mock_post.call_count == 3
+    # 1 set-leverage call + 3 place-order retries
+    assert mock_post.call_count == 4
 
 
 def test_sl_failure_triggers_emergency_close():

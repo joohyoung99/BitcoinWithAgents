@@ -215,7 +215,23 @@ def _qty_from_usdt(size_usdt: float, price: float, leverage: int) -> str:
     return f"{qty:.3f}"
 
 
+def _set_leverage(client, direction: str, leverage: int) -> None:
+    hold_side = "long" if direction == "long" else "short"
+    resp = _bitget_post(client, "/api/v2/mix/account/set-leverage", {
+        "symbol": SYMBOL,
+        "productType": PRODUCT_TYPE,
+        "marginCoin": MARGIN_COIN,
+        "leverage": str(leverage),
+        "holdSide": hold_side,
+    })
+    if resp and resp.get("code") == "00000":
+        print(f"[executor] leverage set: {hold_side} {leverage}x")
+    else:
+        print(f"[executor] set-leverage failed (non-fatal): {resp}")
+
+
 def place_market_entry(client, direction: str, size_usdt: float, price: float, leverage: int) -> dict | None:
+    _set_leverage(client, direction, leverage)
     side = "buy" if direction == "long" else "sell"
     qty = _qty_from_usdt(size_usdt, price, leverage)
     for attempt in range(3):
