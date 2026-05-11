@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC Agent Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a;
+    --text: #e2e8f0; --muted: #64748b;
+    --green: #22c55e; --yellow: #eab308; --orange: #f97316; --red: #ef4444;
+    --blue: #3b82f6; --purple: #a855f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; font-size: 14px; }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    background: var(--card); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; font-weight: 600; }
+  .badge {
+    padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .5px;
+  }
+  .badge-normal   { background: #14532d; color: var(--green); }
+  .badge-caution  { background: #713f12; color: var(--yellow); }
+  .badge-risk_off_trend { background: #7c2d12; color: var(--orange); }
+  .badge-halt     { background: #450a0a; color: var(--red); }
+  .badge-unknown  { background: var(--border); color: var(--muted); }
+  #btc-price { font-size: 18px; font-weight: 700; color: var(--green); }
+  #last-updated { margin-left: auto; color: var(--muted); font-size: 12px; }
+  #conn-banner {
+    display: none; background: var(--red); color: white;
+    text-align: center; padding: 6px; font-size: 13px;
+  }
+  .main { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .kpi-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px;
+  }
+  .kpi-card .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .kpi-card .value { font-size: 22px; font-weight: 700; }
+  .kpi-card .value.pos { color: var(--green); }
+  .kpi-card .value.neg { color: var(--red); }
+  .gauge-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .gauge-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; text-align: center;
+  }
+  .gauge-card .label { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .gauge-card canvas { max-height: 120px; }
+  .gauge-card .gauge-val { font-size: 20px; font-weight: 700; margin-top: 6px; }
+  .mid-row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+  .chart-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px;
+  }
+  .chart-card h3 { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .macro-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .macro-item {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px;
+  }
+  .macro-item .m-label { color: var(--muted); font-size: 11px; }
+  .macro-item .m-value { font-size: 15px; font-weight: 600; margin-top: 3px; }
+  .table-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px;
+  }
+  .table-card h3 { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 8px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  .log-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px;
+  }
+  .log-card h3 { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  #log-box {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px; height: 200px; overflow-y: auto;
+    font-family: monospace; font-size: 12px; line-height: 1.6; color: #94a3b8;
+  }
+  .log-warn { color: var(--yellow); }
+  .log-err  { color: var(--red); }
+  .dir-long  { color: var(--green); font-weight: 600; }
+  .dir-short { color: var(--red); font-weight: 600; }
+  @media (max-width: 900px) {
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .gauge-row { grid-template-columns: repeat(3, 1fr); }
+    .mid-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div id="conn-banner">⚠ 서버 연결 끊김 — 재연결 중...</div>
+
+<header>
+  <h1>🤖 BTC Agent Monitor</h1>
+  <span id="regime-badge" class="badge badge-unknown">UNKNOWN</span>
+  <span id="btc-price">$—</span>
+  <span id="last-updated">업데이트 중...</span>
+</header>
+
+<div class="main">
+
+  <!-- KPI -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="label">신호 신뢰도</div>
+      <div class="value" id="kpi-confidence">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">일일 PnL</div>
+      <div class="value" id="kpi-pnl">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">승률 (오늘)</div>
+      <div class="value" id="kpi-winrate">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">오늘 거래수</div>
+      <div class="value" id="kpi-trades">—</div>
+    </div>
+  </div>
+
+  <!-- Gauges -->
+  <div class="gauge-row">
+    <div class="gauge-card">
+      <div class="label">RSI (14)</div>
+      <canvas id="gauge-rsi"></canvas>
+      <div class="gauge-val" id="rsi-val">—</div>
+    </div>
+    <div class="gauge-card">
+      <div class="label">ADX</div>
+      <canvas id="gauge-adx"></canvas>
+      <div class="gauge-val" id="adx-val">—</div>
+    </div>
+    <div class="gauge-card">
+      <div class="label">Fear &amp; Greed</div>
+      <canvas id="gauge-fg"></canvas>
+      <div class="gauge-val" id="fg-val">—</div>
+    </div>
+  </div>
+
+  <!-- PnL chart + Macro -->
+  <div class="mid-row">
+    <div class="chart-card">
+      <h3>누적 실현 PnL (USDT)</h3>
+      <canvas id="pnl-chart" height="140"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>매크로 지표</h3>
+      <div class="macro-grid">
+        <div class="macro-item">
+          <div class="m-label">Fed Funds Rate</div>
+          <div class="m-value" id="m-fed">—</div>
+        </div>
+        <div class="macro-item">
+          <div class="m-label">ETF 3일 순유입</div>
+          <div class="m-value" id="m-etf">—</div>
+        </div>
+        <div class="macro-item">
+          <div class="m-label">Funding Rate</div>
+          <div class="m-value" id="m-fund">—</div>
+        </div>
+        <div class="macro-item">
+          <div class="m-label">OI (BTC)</div>
+          <div class="m-value" id="m-oi">—</div>
+        </div>
+        <div class="macro-item">
+          <div class="m-label">Long/Short 비율</div>
+          <div class="m-value" id="m-ls">—</div>
+        </div>
+        <div class="macro-item">
+          <div class="m-label">Risk 판단</div>
+          <div class="m-value" id="m-risk">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Positions -->
+  <div class="table-card">
+    <h3>현재 포지션</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>방향</th><th>레버리지</th><th>진입가</th>
+          <th>SL</th><th>TP</th><th>크기(USDT)</th><th>Regime</th>
+        </tr>
+      </thead>
+      <tbody id="positions-body">
+        <tr><td colspan="7" style="color:var(--muted);text-align:center">포지션 없음</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Log -->
+  <div class="log-card">
+    <h3>시스템 로그 (최근 100줄)</h3>
+    <div id="log-box"></div>
+  </div>
+
+</div>
+
+<script>
+const REGIME_LABELS = { normal:'🟢 NORMAL', caution:'🟡 CAUTION', risk_off_trend:'🟠 RISK-OFF TREND', halt:'🔴 HALT' };
+
+// --- Gauge helpers ---
+function makeGauge(id, max) {
+  const ctx = document.getElementById(id).getContext('2d');
+  return new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [0, max],
+        backgroundColor: ['#3b82f6', '#1e293b'],
+        borderWidth: 0,
+        circumference: 180,
+        rotation: 270,
+      }]
+    },
+    options: { cutout: '70%', plugins: { legend: { display: false }, tooltip: { enabled: false } }, animation: { duration: 400 } }
+  });
+}
+
+function updateGauge(chart, val, max, id) {
+  const v = Math.min(Math.max(val, 0), max);
+  chart.data.datasets[0].data = [v, max - v];
+  chart.data.datasets[0].backgroundColor[0] =
+    val < max * 0.3 ? '#ef4444' : val > max * 0.7 ? '#22c55e' : '#eab308';
+  chart.update('none');
+  document.getElementById(id).textContent = val.toFixed(1);
+}
+
+const gaugeRsi = makeGauge('gauge-rsi', 100);
+const gaugeAdx = makeGauge('gauge-adx', 60);
+const gaugeFg  = makeGauge('gauge-fg',  100);
+
+// --- PnL line chart ---
+const pnlCtx = document.getElementById('pnl-chart').getContext('2d');
+const pnlChart = new Chart(pnlCtx, {
+  type: 'line',
+  data: { labels: [], datasets: [{ label: 'PnL', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', fill: true, tension: 0.3, pointRadius: 3 }] },
+  options: {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#64748b', maxTicksLimit: 8 }, grid: { color: '#1e293b' } },
+      y: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } }
+    }
+  }
+});
+
+// --- Fetch helpers ---
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+function fmt(n, decimals=2) {
+  if (n == null || n === '') return '—';
+  const v = parseFloat(n);
+  return isNaN(v) ? '—' : v.toFixed(decimals);
+}
+
+function fmtPnl(el, v) {
+  const n = parseFloat(v);
+  el.textContent = isNaN(n) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + ' U';
+  el.className = 'value ' + (n >= 0 ? 'pos' : 'neg');
+}
+
+// --- Update functions ---
+function applyState(s) {
+  if (!s || !s.regime) return;
+  const badge = document.getElementById('regime-badge');
+  badge.textContent = REGIME_LABELS[s.regime] || s.regime.toUpperCase();
+  badge.className = 'badge badge-' + s.regime;
+  document.getElementById('btc-price').textContent = s.close ? '$' + Number(s.close).toLocaleString() : '$—';
+  if (s.confidence != null) {
+    const el = document.getElementById('kpi-confidence');
+    el.textContent = s.confidence + '%';
+    el.className = 'value ' + (s.confidence >= 70 ? 'pos' : s.confidence >= 50 ? '' : 'neg');
+  }
+  if (s.rsi != null) updateGauge(gaugeRsi, s.rsi, 100, 'rsi-val');
+  if (s.adx != null) updateGauge(gaugeAdx, s.adx, 60, 'adx-val');
+}
+
+function applyExplorer(e) {
+  if (!e) return;
+  const fg = e.fear_greed?.score;
+  if (fg != null) updateGauge(gaugeFg, fg, 100, 'fg-val');
+  document.getElementById('m-fed').textContent  = e.macro?.fed_funds_rate != null ? e.macro.fed_funds_rate + '%' : '—';
+  const flow = e.etf?.net_flow_3d;
+  document.getElementById('m-etf').textContent  = flow != null ? (flow >= 0 ? '+' : '') + (flow/1e6).toFixed(1) + 'M' : '—';
+  document.getElementById('m-fund').textContent = e.market?.funding_rate != null ? (e.market.funding_rate * 100).toFixed(4) + '%' : '—';
+  document.getElementById('m-oi').textContent   = e.market?.open_interest != null ? fmt(e.market.open_interest, 0) : '—';
+  document.getElementById('m-ls').textContent   = e.market?.long_short_ratio != null ? fmt(e.market.long_short_ratio, 3) : '—';
+  document.getElementById('m-risk').textContent = e.risk ? e.risk.toUpperCase() : '—';
+}
+
+function applyDaily(d) {
+  if (!d) return;
+  fmtPnl(document.getElementById('kpi-pnl'), d.daily_pnl_usdt);
+  const tc = d.trade_count || 0;
+  const wins = d.wins || 0;
+  document.getElementById('kpi-winrate').textContent = tc > 0 ? (wins / tc * 100).toFixed(0) + '%' : '—';
+  document.getElementById('kpi-trades').textContent = tc + '회';
+}
+
+function applyPositions(p) {
+  const tbody = document.getElementById('positions-body');
+  const list = p?.positions || [];
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted);text-align:center">포지션 없음</td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(pos => `
+    <tr>
+      <td class="dir-${pos.direction}">${pos.direction?.toUpperCase() || '—'}</td>
+      <td>${pos.leverage || '—'}x</td>
+      <td>$${pos.entry_price ? Number(pos.entry_price).toLocaleString() : '—'}</td>
+      <td>$${pos.sl_price   ? Number(pos.sl_price).toLocaleString()    : '—'}</td>
+      <td>$${pos.tp_price   ? Number(pos.tp_price).toLocaleString()    : '—'}</td>
+      <td>${pos.size_usdt   ? fmt(pos.size_usdt, 0) + ' U'             : '—'}</td>
+      <td>${pos.regime      || '—'}</td>
+    </tr>`).join('');
+}
+
+function applyTrades(trades) {
+  if (!trades?.length) return;
+  let cum = 0;
+  const labels = [], data = [];
+  trades.slice(-50).forEach((t, i) => {
+    const pnl = parseFloat(t.realized_pnl_usdt) || 0;
+    cum += pnl;
+    labels.push('#' + (i + 1));
+    data.push(+cum.toFixed(2));
+  });
+  pnlChart.data.labels = labels;
+  pnlChart.data.datasets[0].data = data;
+  pnlChart.data.datasets[0].borderColor = cum >= 0 ? '#22c55e' : '#ef4444';
+  pnlChart.data.datasets[0].backgroundColor = cum >= 0 ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)';
+  pnlChart.update();
+}
+
+function applyLogs(logs) {
+  const box = document.getElementById('log-box');
+  const lines = logs?.lines || [];
+  box.innerHTML = lines.map(l => {
+    if (/error|fail|ERR/i.test(l)) return `<div class="log-err">${escHtml(l)}</div>`;
+    if (/warn|HALT|exhausted/i.test(l)) return `<div class="log-warn">${escHtml(l)}</div>`;
+    return `<div>${escHtml(l)}</div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// --- Main refresh loop ---
+let errCount = 0;
+
+async function refresh() {
+  try {
+    const [state, explorer, positions, daily, trades, logs] = await Promise.all([
+      fetchJSON('/api/state'),
+      fetchJSON('/api/explorer'),
+      fetchJSON('/api/positions'),
+      fetchJSON('/api/daily'),
+      fetchJSON('/api/trades'),
+      fetchJSON('/api/logs'),
+    ]);
+    applyState(state);
+    applyExplorer(explorer);
+    applyPositions(positions);
+    applyDaily(daily);
+    applyTrades(trades);
+    applyLogs(logs);
+
+    document.getElementById('last-updated').textContent =
+      '업데이트: ' + new Date().toLocaleTimeString('ko-KR');
+    document.getElementById('conn-banner').style.display = 'none';
+    errCount = 0;
+  } catch (e) {
+    errCount++;
+    if (errCount >= 2) document.getElementById('conn-banner').style.display = 'block';
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
