@@ -93,7 +93,7 @@ MAX_CONSECUTIVE_LOSSES = 3
 
 
 def calc_trade_size(balance: float) -> float:
-    return min(2000.0, balance * 0.10)
+    return 2000.0
 
 
 def check_risk(positions: list, daily: dict, regime: str) -> tuple[bool, str]:
@@ -725,6 +725,9 @@ def run_executor_once() -> None:
         except Exception as e:
             print(f"[executor] balance fetch error: {e} — skip")
             return
+        if balance < 2000.0:
+            print(f"[executor] balance {balance:.2f} < 2000 USDT — 관망")
+            return
         size_usdt = calc_trade_size(balance)
         leverage = get_leverage(regime, direction)
 
@@ -802,7 +805,7 @@ def run_executor_once() -> None:
         _log_portfolio(client if "client" in dir() else None)
 
 
-INITIAL_BALANCE = 19_950.0
+INITIAL_BALANCE = 19_293.0
 PORTFOLIO_PATH = Path("data/portfolio.json")
 
 

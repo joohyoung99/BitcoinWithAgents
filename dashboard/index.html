@@ -42,7 +42,7 @@
   }
   .hero-main { display: flex; flex-direction: column; gap: 6px; }
   .hero-label { color: var(--muted); font-size: 13px; letter-spacing: .5px; text-transform: uppercase; }
-  .hero-equity { font-size: 52px; font-weight: 800; line-height: 1; letter-spacing: -1px; }
+  .hero-equity { font-size: 44px; font-weight: 800; line-height: 1; letter-spacing: -1px; }
   .hero-equity.pos { color: var(--green); }
   .hero-equity.neg { color: var(--red); }
   .hero-return { font-size: 28px; font-weight: 700; }
@@ -129,7 +129,7 @@
   <div class="hero-main">
     <div class="hero-label">총 자산 (USDT)</div>
     <div class="hero-equity" id="hero-equity">—</div>
-    <div class="hero-sub">기준 19,950 USDT &nbsp;|&nbsp; <span id="hero-return" class="hero-return">—</span></div>
+    <div class="hero-sub">기준 19,293 USDT &nbsp;|&nbsp; <span id="hero-return" class="hero-return">—</span></div>
   </div>
   <div class="hero-side">
     <div class="hero-label">미실현 손익</div>
@@ -303,7 +303,7 @@ function fmt(n, decimals=2) {
 
 function fmtPnl(el, v) {
   const n = parseFloat(v);
-  el.textContent = isNaN(n) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + ' U';
+  el.textContent = isNaN(n) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(2) + ' USDT';
   el.className = 'value ' + (n >= 0 ? 'pos' : 'neg');
 }
 
@@ -316,8 +316,8 @@ function applyPortfolio(p) {
 
   const eqEl = document.getElementById('hero-equity');
   if (eq != null) {
-    eqEl.textContent = Number(eq).toLocaleString('ko-KR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' U';
-    eqEl.className = 'hero-equity ' + (eq >= (p.initial || 19950) ? 'pos' : 'neg');
+    eqEl.textContent = Number(eq).toLocaleString('ko-KR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' USDT';
+    eqEl.className = 'hero-equity ' + (eq >= (p.initial || 19293) ? 'pos' : 'neg');
   }
 
   const retEl = document.getElementById('hero-return');
@@ -328,7 +328,7 @@ function applyPortfolio(p) {
 
   const unrEl = document.getElementById('hero-unrealized');
   if (unr != null) {
-    unrEl.textContent = (unr >= 0 ? '+' : '') + unr.toFixed(2) + ' U';
+    unrEl.textContent = (unr >= 0 ? '+' : '') + unr.toFixed(2) + ' USDT';
     unrEl.className = 'hero-unrealized ' + (unr >= 0 ? 'pos' : 'neg');
   }
 }
@@ -384,7 +384,7 @@ function applyPositions(p) {
       <td>$${pos.entry_price ? Number(pos.entry_price).toLocaleString() : '—'}</td>
       <td>$${pos.sl_price   ? Number(pos.sl_price).toLocaleString()    : '—'}</td>
       <td>$${pos.tp_price   ? Number(pos.tp_price).toLocaleString()    : '—'}</td>
-      <td>${pos.size_usdt   ? fmt(pos.size_usdt, 0) + ' U'             : '—'}</td>
+      <td>${pos.size_usdt   ? fmt(pos.size_usdt, 0) + ' USDT'          : '—'}</td>
       <td>${escHtml(pos.regime || '—')}</td>
     </tr>`).join('');
 }
