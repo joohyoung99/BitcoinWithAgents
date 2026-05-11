@@ -35,6 +35,24 @@
     display: none; background: var(--red); color: white;
     text-align: center; padding: 6px; font-size: 13px;
   }
+  .hero {
+    background: var(--card); border-bottom: 1px solid var(--border);
+    padding: 28px 32px; display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 24px;
+  }
+  .hero-main { display: flex; flex-direction: column; gap: 6px; }
+  .hero-label { color: var(--muted); font-size: 13px; letter-spacing: .5px; text-transform: uppercase; }
+  .hero-equity { font-size: 52px; font-weight: 800; line-height: 1; letter-spacing: -1px; }
+  .hero-equity.pos { color: var(--green); }
+  .hero-equity.neg { color: var(--red); }
+  .hero-return { font-size: 28px; font-weight: 700; }
+  .hero-return.pos { color: var(--green); }
+  .hero-return.neg { color: var(--red); }
+  .hero-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .hero-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .hero-unrealized { font-size: 18px; font-weight: 600; }
+  .hero-unrealized.pos { color: var(--green); }
+  .hero-unrealized.neg { color: var(--red); }
   .main { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
   .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
   .kpi-card {
@@ -106,6 +124,18 @@
   <span id="btc-price">$—</span>
   <span id="last-updated">업데이트 중...</span>
 </header>
+
+<div class="hero">
+  <div class="hero-main">
+    <div class="hero-label">총 자산 (USDT)</div>
+    <div class="hero-equity" id="hero-equity">—</div>
+    <div class="hero-sub">기준 19,950 USDT &nbsp;|&nbsp; <span id="hero-return" class="hero-return">—</span></div>
+  </div>
+  <div class="hero-side">
+    <div class="hero-label">미실현 손익</div>
+    <div class="hero-unrealized" id="hero-unrealized">—</div>
+  </div>
+</div>
 
 <div class="main">
 
@@ -278,6 +308,31 @@ function fmtPnl(el, v) {
 }
 
 // --- Update functions ---
+function applyPortfolio(p) {
+  if (!p) return;
+  const eq = p.equity;
+  const ret = p.return_pct;
+  const unr = p.unrealized;
+
+  const eqEl = document.getElementById('hero-equity');
+  if (eq != null) {
+    eqEl.textContent = Number(eq).toLocaleString('ko-KR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' U';
+    eqEl.className = 'hero-equity ' + (eq >= (p.initial || 19950) ? 'pos' : 'neg');
+  }
+
+  const retEl = document.getElementById('hero-return');
+  if (ret != null) {
+    retEl.textContent = (ret >= 0 ? '+' : '') + ret.toFixed(2) + '%';
+    retEl.className = 'hero-return ' + (ret >= 0 ? 'pos' : 'neg');
+  }
+
+  const unrEl = document.getElementById('hero-unrealized');
+  if (unr != null) {
+    unrEl.textContent = (unr >= 0 ? '+' : '') + unr.toFixed(2) + ' U';
+    unrEl.className = 'hero-unrealized ' + (unr >= 0 ? 'pos' : 'neg');
+  }
+}
+
 function applyState(s) {
   if (!s || !s.regime) return;
   const badge = document.getElementById('regime-badge');
@@ -371,7 +426,8 @@ let errCount = 0;
 
 async function refresh() {
   try {
-    const [state, explorer, positions, daily, trades, logs] = await Promise.all([
+    const [portfolio, state, explorer, positions, daily, trades, logs] = await Promise.all([
+      fetchJSON('/api/portfolio'),
       fetchJSON('/api/state'),
       fetchJSON('/api/explorer'),
       fetchJSON('/api/positions'),
@@ -379,6 +435,7 @@ async function refresh() {
       fetchJSON('/api/trades'),
       fetchJSON('/api/logs'),
     ]);
+    applyPortfolio(portfolio);
     applyState(state);
     applyExplorer(explorer);
     applyPositions(positions);

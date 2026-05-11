@@ -72,6 +72,14 @@ def get_trades():
         return []
 
 
+@app.get("/api/portfolio")
+def get_portfolio():
+    try:
+        return json.loads((DATA / "portfolio.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {"equity": None, "unrealized": 0.0, "return_pct": None, "initial": 19950.0}
+
+
 @app.get("/api/logs")
 def get_logs():
     try:

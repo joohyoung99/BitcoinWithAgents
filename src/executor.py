@@ -773,11 +773,12 @@ def run_executor_once() -> None:
         _log_portfolio(client if "client" in dir() else None)
 
 
-INITIAL_BALANCE = 20_000.0
+INITIAL_BALANCE = 19_950.0
+PORTFOLIO_PATH = Path("data/portfolio.json")
 
 
 def _log_portfolio(client) -> None:
-    """매 사이클 잔고·수익률 출력."""
+    """매 사이클 잔고·수익률 출력 + data/portfolio.json 저장."""
     try:
         if client is None:
             return
@@ -787,7 +788,6 @@ def _log_portfolio(client) -> None:
         acc = balance_data.data[0]
         equity = float(acc.get("equity", 0) or acc.get("available", 0))
 
-        # 미결제 손익
         pos_resp = _bitget_get(client, "/api/v2/mix/position/all-position", {
             "productType": PRODUCT_TYPE,
             "marginCoin": MARGIN_COIN,
@@ -803,5 +803,16 @@ def _log_portfolio(client) -> None:
             f"[portfolio] equity={equity:.2f} USDT  unrealized={unrealized:+.2f}"
             f"  return={ret_pct:+.2f}%  (initial={INITIAL_BALANCE:.0f})"
         )
+
+        portfolio = {
+            "equity": round(equity, 2),
+            "unrealized": round(unrealized, 2),
+            "return_pct": round(ret_pct, 4),
+            "initial": INITIAL_BALANCE,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        tmp = PORTFOLIO_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(portfolio, indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(PORTFOLIO_PATH))
     except Exception as e:
         print(f"[portfolio] log failed: {e}")
