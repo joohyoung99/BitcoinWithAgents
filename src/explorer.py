@@ -28,7 +28,7 @@ from src.db import init_db, log_event
 from src.regime import run_regime_once
 from src.ws_monitor import run_ws_monitor
 
-dotenv.load_dotenv()  # Load environment variables from .env file
+dotenv.load_dotenv(encoding="utf-8")
 
 
 FEAR_GREED_URL = "https://api.alternative.me/fng/"

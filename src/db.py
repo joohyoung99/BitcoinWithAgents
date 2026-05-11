@@ -10,7 +10,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 
 def _connect():
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg2.connect(DATABASE_URL, options="-c client_encoding=UTF8")
 
 
 def init_db() -> None:

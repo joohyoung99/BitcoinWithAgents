@@ -166,6 +166,7 @@ def place_limit_order(client, direction: str, size_usdt: float, price: float, le
                 "size": qty,
                 "price": str(price),
                 "side": side,
+                "tradeSide": "open",
                 "orderType": "limit",
                 "leverage": str(leverage),
             })
@@ -199,13 +200,21 @@ def _calc_pnl(position: dict, close_price: float) -> float:
 
 
 def close_position_market(client, position: dict, reason: str, daily: dict, positions_data: dict) -> bool:
-    resp = _bitget_post(client, "/api/v2/mix/order/flash-close-positions", {
+    # hedge_mode: long 청산 = buy+close / short 청산 = sell+close
+    close_side = "buy" if position["direction"] == "long" else "sell"
+    btc_qty = _qty_from_usdt(position["size_usdt"], position["entry_price"], position["leverage"])
+    resp = _bitget_post(client, "/api/v2/mix/order/place-order", {
         "symbol": SYMBOL,
         "productType": PRODUCT_TYPE,
-        "holdSide": position["direction"],
+        "marginMode": "isolated",
+        "marginCoin": MARGIN_COIN,
+        "size": btc_qty,
+        "side": close_side,
+        "tradeSide": "close",
+        "orderType": "market",
     })
     if not resp or resp.get("code") != "00000":
-        print(f"[executor] flash_close failed: {resp}")
+        print(f"[executor] close_market failed: {resp}")
         return False
 
     now = datetime.now(UTC).isoformat()
@@ -268,10 +277,17 @@ def place_stop_loss_with_emergency(client, position: dict) -> bool:
             time.sleep(1)
 
     print("[executor] SL all retries failed — emergency market close")
-    _bitget_post(client, "/api/v2/mix/order/flash-close-positions", {
+    close_side = "buy" if hold_side == "long" else "sell"
+    btc_qty = _qty_from_usdt(position["size_usdt"], position["entry_price"], position["leverage"])
+    _bitget_post(client, "/api/v2/mix/order/place-order", {
         "symbol": SYMBOL,
         "productType": PRODUCT_TYPE,
-        "holdSide": hold_side,
+        "marginMode": "isolated",
+        "marginCoin": MARGIN_COIN,
+        "size": btc_qty,
+        "side": close_side,
+        "tradeSide": "close",
+        "orderType": "market",
     })
     return False
 

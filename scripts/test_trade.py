@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.parse
 import requests
 from src.client import get_client
 
@@ -24,12 +25,23 @@ WAIT_SECONDS = 30
 def _post(client, endpoint: str, body: dict) -> dict:
     rh = client.account.request_handler
     body_str = json.dumps(body)
-
     headers = rh._get_headers("POST", endpoint, "", body_str)
     resp = rh.session.post(
         f"{rh.base_url}{endpoint}",
         headers=headers,
         data=body_str,
+    )
+    return resp.json()
+
+
+def _get(client, endpoint: str, params: dict) -> dict:
+    rh = client.account.request_handler
+    query_string = urllib.parse.urlencode(params)
+    headers = rh._get_headers("GET", endpoint, query_string, "")
+    resp = rh.session.get(
+        f"{rh.base_url}{endpoint}",
+        headers=headers,
+        params=params,
     )
     return resp.json()
 
@@ -46,32 +58,37 @@ def get_current_price() -> float:
 # -------------------------
 # Position check (핵심)
 # -------------------------
-def get_position(client) -> float:
+def get_position(client) -> tuple[float, str, str]:
     """
-    return: position size (BTC)
+    return: (position size in BTC, marginMode, holdSide)
     """
     endpoint = "/api/v2/mix/position/single-position"
 
-    body = {
+    params = {
         "symbol": SYMBOL,
         "productType": PRODUCT_TYPE,
         "marginCoin": MARGIN_COIN,
     }
 
-    result = _post(client, endpoint, body)
+    result = _get(client, endpoint, params)
 
     if result.get("code") != "00000":
         print("[position] error:", result)
-        return 0.0
+        return 0.0, "isolated", "long"
 
     data = result.get("data", [])
     if not data:
-        return 0.0
+        return 0.0, "isolated", "long"
 
     try:
-        return float(data[0].get("available", 0))
+        pos = data[0]
+        size = float(pos.get("total", 0))
+        margin_mode = pos.get("marginMode", "isolated")
+        hold_side = pos.get("holdSide", "long")
+        print(f"[position] size={size} marginMode={margin_mode} holdSide={hold_side}")
+        return size, margin_mode, hold_side
     except Exception:
-        return 0.0
+        return 0.0, "isolated", "long"
 
 
 def wait_for_position(client, timeout=10) -> bool:
@@ -79,7 +96,7 @@ def wait_for_position(client, timeout=10) -> bool:
     BUY 이후 포지션 생성 확인
     """
     for i in range(timeout):
-        size = get_position(client)
+        size, _, _ = get_position(client)
         print(f"[position-check] size={size}")
 
         if size > 0:
@@ -99,7 +116,7 @@ def set_leverage(client) -> None:
         "productType": PRODUCT_TYPE,
         "marginCoin": MARGIN_COIN,
         "leverage": str(LEVERAGE),
-        "holdSide": "short",
+        "holdSide": "long",
     })
 
     print(f"[leverage] {result.get('code')} {result.get('msg')}")
@@ -132,19 +149,20 @@ def place_market_buy(client, price: float) -> tuple[str, float]:
     return result["data"]["orderId"], qty
 
 
-def place_market_sell(client, qty: float, price: float) -> None:
-    print(f"[sell] market sell {qty} BTC @ ~{price:.0f}")
+def place_market_sell(client, qty: float, price: float, margin_mode: str = "isolated", hold_side: str = "long") -> None:
+    print(f"[sell] market sell {qty} BTC @ ~{price:.0f} (marginMode={margin_mode} holdSide={hold_side})")
 
+    # hedge_mode: long 청산 = buy + close / short 청산 = sell + close
+    close_side = "buy" if hold_side == "long" else "sell"
     result = _post(client, "/api/v2/mix/order/place-order", {
         "symbol": SYMBOL,
         "productType": PRODUCT_TYPE,
-        "marginMode": "isolated",
+        "marginMode": margin_mode,
         "marginCoin": MARGIN_COIN,
         "size": str(qty),
-        "side": "sell",
+        "side": close_side,
         "tradeSide": "close",
         "orderType": "market",
-        "leverage": str(LEVERAGE),
     })
 
     print(f"[sell] response: {result}")
@@ -181,12 +199,12 @@ def main() -> None:
         time.sleep(10)
 
     # 🔥 SELL 전에 다시 확인
-    size = get_position(client)
+    size, margin_mode, hold_side = get_position(client)
     if size <= 0:
         raise RuntimeError("no position before sell")
 
     price = get_current_price()
-    place_market_sell(client, size, price)
+    place_market_sell(client, size, price, margin_mode, hold_side)
 
     print("[done] trade complete")
 

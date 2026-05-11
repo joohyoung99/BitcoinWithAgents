@@ -112,10 +112,10 @@ def determine_entry(df: pd.DataFrame, trend_range: str, risk: str) -> str:
             return "short"
         return "none"
 
-    # Caution: range + risk-on
-    if close >= bbu:
+    # Caution: range + risk-on (BB 상/하단 0.5% 근접 시 신호)
+    if close >= bbu * 0.998:
         return "short"
-    if close <= bbl:
+    if close <= bbl * 1.002:
         return "long"
     return "none"
 
