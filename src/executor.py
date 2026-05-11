@@ -205,6 +205,8 @@ def sync_exchange_positions(client, positions_data: dict, atr: float, regime: st
             "opened_at": datetime.now(UTC).isoformat(),
             "synced": True,
         }
+        # 흡수 전에 기존 tpsl 주문 전체 취소 (중복 누적 방지)
+        cancel_all_tpsl_for_side(client, hold_side)
         # 흡수 즉시 SL + TP 거래소 등록
         place_stop_loss_with_emergency(client, record)
         place_take_profit(client, record)
@@ -238,7 +240,6 @@ def _set_leverage(client, direction: str, leverage: int) -> None:
 
 def place_market_entry(
     client, direction: str, size_usdt: float, price: float, leverage: int,
-    sl_price: float = 0.0, tp_price: float = 0.0,
 ) -> dict | None:
     _set_leverage(client, direction, leverage)
     side = "buy" if direction == "long" else "sell"
@@ -254,10 +255,8 @@ def place_market_entry(
         "orderType": "market",
         "leverage": str(leverage),
     }
-    if sl_price > 0:
-        body["presetStopLossPrice"] = str(round(sl_price, 1))
-    if tp_price > 0:
-        body["presetStopSurplusPrice"] = str(round(tp_price, 1))
+    # preset SL/TP 제거: state.json 가격이 최대 15분 stale이라 40836/40832 에러 발생
+    # 체결 후 실제 fill 가격 기준으로 별도 tpsl 등록
 
     for attempt in range(3):
         try:
@@ -342,6 +341,36 @@ def close_position_market(client, position: dict, reason: str, daily: dict, posi
         p for p in positions_data["positions"] if p["order_id"] != position["order_id"]
     ]
     return True
+
+
+def cancel_all_tpsl_for_side(client, hold_side: str) -> int:
+    """Cancel all pending tpsl orders for a given holdSide. Returns count cancelled."""
+    resp = _bitget_get(client, "/api/v2/mix/order/tpsl-pending", {
+        "symbol": SYMBOL,
+        "productType": PRODUCT_TYPE,
+    })
+    if not resp or resp.get("code") != "00000":
+        return 0
+    raw = resp.get("data", [])
+    items = raw if isinstance(raw, list) else (raw.get("entrustedList") or raw.get("list") or [])
+    cancelled = 0
+    for order in items:
+        if order.get("holdSide") != hold_side:
+            continue
+        oid = order.get("orderId", "")
+        if not oid:
+            continue
+        r = _bitget_post(client, "/api/v2/mix/order/cancel-tpsl-order", {
+            "symbol": SYMBOL,
+            "productType": PRODUCT_TYPE,
+            "marginCoin": MARGIN_COIN,
+            "orderId": oid,
+        })
+        if r and r.get("code") == "00000":
+            cancelled += 1
+    if cancelled:
+        print(f"[executor] cancelled {cancelled} stale tpsl orders for {hold_side}")
+    return cancelled
 
 
 def place_stop_loss_with_emergency(client, position: dict) -> bool:
@@ -707,7 +736,6 @@ def run_executor_once() -> None:
         # presetStopSurplusPrice는 stale close 가격 기반이라 현재가 역전 시 40832 에러 발생
         order_result = place_market_entry(
             client, direction, size_usdt, current_price, leverage,
-            sl_price=sl_price,
         )
         if not order_result:
             print("[executor] entry order failed after retries — skip")
@@ -744,7 +772,8 @@ def run_executor_once() -> None:
         sl_price = calc_sl_price(direction, entry_price, atr, regime)
         tp_price = calc_tp_price(direction, entry_price, atr, regime)
 
-        # 11. 폴백: preset이 실패했을 경우 별도 SL/TP 등록 시도
+        # 11. 별도 SL/TP 등록 (체결가 기준, 기존 tpsl 먼저 취소)
+        cancel_all_tpsl_for_side(client, direction)
         position_record = {
             "order_id": order_id,
             "direction": direction,
