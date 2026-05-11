@@ -18,12 +18,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA = Path("data")
+_ROOT = Path(__file__).parent
+DATA = _ROOT / "data"
 
 
 @app.get("/")
 def index():
-    return FileResponse("dashboard/index.html")
+    return FileResponse(_ROOT / "dashboard" / "index.html")
 
 
 @app.get("/api/state")

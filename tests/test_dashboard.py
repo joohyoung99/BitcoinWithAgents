@@ -15,10 +15,10 @@ def data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def client(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.chdir(data_dir)
+    import dashboard
     (data_dir / "data").mkdir()
-    from dashboard import app
-    return TestClient(app)
+    monkeypatch.setattr(dashboard, "DATA", data_dir / "data")
+    return TestClient(dashboard.app)
 
 
 def test_state_empty(client):
