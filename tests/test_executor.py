@@ -101,11 +101,11 @@ def test_calc_sl_tp_normal_short():
 
 def test_get_leverage():
     from src.executor import get_leverage
-    assert get_leverage("normal", "long") == 5
-    assert get_leverage("normal", "short") == 3
-    assert get_leverage("caution", "long") == 3
-    assert get_leverage("caution", "short") == 2
-    assert get_leverage("risk_off_trend", "short") == 2
+    assert get_leverage("normal", "long") == 10
+    assert get_leverage("normal", "short") == 5
+    assert get_leverage("caution", "long") == 5
+    assert get_leverage("caution", "short") == 3
+    assert get_leverage("risk_off_trend", "short") == 3
 
 
 def test_place_entry_retry_succeeds_on_third():
