@@ -236,23 +236,32 @@ def _set_leverage(client, direction: str, leverage: int) -> None:
         print(f"[executor] set-leverage failed (non-fatal): {resp}")
 
 
-def place_market_entry(client, direction: str, size_usdt: float, price: float, leverage: int) -> dict | None:
+def place_market_entry(
+    client, direction: str, size_usdt: float, price: float, leverage: int,
+    sl_price: float = 0.0, tp_price: float = 0.0,
+) -> dict | None:
     _set_leverage(client, direction, leverage)
     side = "buy" if direction == "long" else "sell"
     qty = _qty_from_usdt(size_usdt, price, leverage)
+    body: dict = {
+        "symbol": SYMBOL,
+        "productType": PRODUCT_TYPE,
+        "marginMode": "isolated",
+        "marginCoin": MARGIN_COIN,
+        "size": qty,
+        "side": side,
+        "tradeSide": "open",
+        "orderType": "market",
+        "leverage": str(leverage),
+    }
+    if sl_price > 0:
+        body["presetStopLossPrice"] = str(round(sl_price, 2))
+    if tp_price > 0:
+        body["presetStopSurplusPrice"] = str(round(tp_price, 2))
+
     for attempt in range(3):
         try:
-            resp = _bitget_post(client, "/api/v2/mix/order/place-order", {
-                "symbol": SYMBOL,
-                "productType": PRODUCT_TYPE,
-                "marginMode": "isolated",
-                "marginCoin": MARGIN_COIN,
-                "size": qty,
-                "side": side,
-                "tradeSide": "open",
-                "orderType": "market",
-                "leverage": str(leverage),
-            })
+            resp = _bitget_post(client, "/api/v2/mix/order/place-order", body)
             if resp and resp.get("code") == "00000":
                 return resp.get("data")
             print(f"[executor] place_order attempt {attempt+1} failed: {resp}")
@@ -646,14 +655,22 @@ def run_executor_once() -> None:
         size_usdt = calc_trade_size(balance)
         leverage = get_leverage(regime, direction)
 
-        # 8. Place market entry (3 retry)
-        order_result = place_market_entry(client, direction, size_usdt, current_price, leverage)
+        # 8. SL/TP 가격 사전 계산 (현재가 기준 — 시장가라 슬리피지 미미)
+        sl_price = calc_sl_price(direction, current_price, atr, regime)
+        tp_price = calc_tp_price(direction, current_price, atr, regime)
+
+        # 9. Place market entry — SL/TP 주문과 동시 등록 (presetStopLossPrice)
+        order_result = place_market_entry(
+            client, direction, size_usdt, current_price, leverage,
+            sl_price=sl_price, tp_price=tp_price,
+        )
         if not order_result:
             print("[executor] entry order failed after retries — skip")
             return
         order_id = str(order_result.get("orderId", ""))
+        print(f"[executor] order placed with preset SL={sl_price:.1f} TP={tp_price:.1f}")
 
-        # 9. Poll order fill via REST (9s, every 3s — market fills fast)
+        # 10. Poll order fill via REST (9s, every 3s — market fills fast)
         fill_data = None
         for _ in range(3):
             time.sleep(3)
@@ -678,10 +695,11 @@ def run_executor_once() -> None:
             return
 
         entry_price = float(fill_data.get("priceAvg", current_price))
+        # 실제 체결가 기준으로 재계산
         sl_price = calc_sl_price(direction, entry_price, atr, regime)
         tp_price = calc_tp_price(direction, entry_price, atr, regime)
 
-        # 10. Place exchange SL + TP
+        # 11. 폴백: preset이 실패했을 경우 별도 SL/TP 등록 시도
         position_record = {
             "order_id": order_id,
             "direction": direction,
@@ -696,16 +714,13 @@ def run_executor_once() -> None:
             "atr_at_entry": atr,
             "opened_at": datetime.now(UTC).isoformat(),
         }
-        sl_ok = place_stop_loss_with_emergency(client, position_record)
-        if not sl_ok:
-            print(f"[executor] SL failed + emergency close triggered for {order_id}")
-            return
-        place_take_profit(client, position_record)  # non-fatal — fallback via check_tp_hits
+        place_stop_loss_with_emergency(client, position_record)
+        place_take_profit(client, position_record)
 
-        # 11. Update positions.json
+        # 12. Update positions.json
         positions_data["positions"].append(position_record)
         save_positions(positions_data)
-        print(f"[executor] opened {direction} order={order_id} entry={entry_price} sl={sl_price:.1f} tp={tp_price:.1f}")
+        print(f"[executor] opened {direction} order={order_id} entry={entry_price:.1f} sl={sl_price:.1f} tp={tp_price:.1f}")
 
     except Exception as e:
         print(f"[executor] run_executor_once error: {e}")
