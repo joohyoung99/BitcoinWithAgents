@@ -369,14 +369,113 @@ def place_stop_loss_with_emergency(client, position: dict) -> bool:
     return False
 
 
-def check_tp_hits(client, positions_data: dict, daily: dict, current_price: float) -> None:
-    """Check if TP is hit for any position. If so, market close."""
+def place_take_profit(client, position: dict) -> bool:
+    """Submit exchange-side TP. Non-fatal — check_tp_hits acts as fallback."""
+    hold_side = position["direction"]
+    tp_price = position["tp_price"]
+    for attempt in range(3):
+        try:
+            resp = _bitget_post(client, "/api/v2/mix/order/place-tpsl-order", {
+                "symbol": SYMBOL,
+                "productType": PRODUCT_TYPE,
+                "marginCoin": MARGIN_COIN,
+                "planType": "profit_plan",
+                "triggerPrice": str(round(tp_price, 2)),
+                "holdSide": hold_side,
+                "size": "0",
+                "triggerType": "mark_price",
+            })
+            if resp and resp.get("code") == "00000":
+                tp_order_id = (resp.get("data") or {}).get("orderId", "")
+                position["tp_order_id"] = tp_order_id
+                print(f"[executor] TP set: {hold_side} tp={tp_price:.1f} id={tp_order_id}")
+                return True
+            print(f"[executor] TP attempt {attempt+1} failed: {resp}")
+        except Exception as e:
+            print(f"[executor] TP attempt {attempt+1} exception: {e}")
+        if attempt < 2:
+            time.sleep(1)
+    print("[executor] TP all retries failed — check_tp_hits will act as fallback")
+    return False
+
+
+def reconcile_closed_positions(
+    client, positions_data: dict, daily: dict, current_price: float
+) -> None:
+    """거래소에서 SL/TP로 닫힌 포지션을 감지해 positions.json 정리 + trades.csv 기록."""
+    if not positions_data["positions"]:
+        return
+
+    resp = _bitget_get(client, "/api/v2/mix/position/all-position", {
+        "productType": PRODUCT_TYPE,
+        "marginCoin": MARGIN_COIN,
+    })
+    if not resp or resp.get("code") != "00000":
+        return
+
+    open_directions: set[str] = set()
+    for ex_pos in resp.get("data", []):
+        if ex_pos.get("symbol") == SYMBOL and float(ex_pos.get("total", 0)) > 0:
+            open_directions.add(ex_pos.get("holdSide", ""))
+
     for pos in list(positions_data["positions"]):
+        if pos["direction"] in open_directions:
+            continue
+
+        direction = pos["direction"]
+        tp = pos["tp_price"]
+        sl = pos["sl_price"]
+        # 현재가 기준으로 TP/SL 중 어느 쪽이 체결됐는지 추정
+        if direction == "long":
+            close_price = tp if current_price >= tp * 0.995 else sl
+            reason = "TP" if current_price >= tp * 0.995 else "SL"
+        else:
+            close_price = tp if current_price <= tp * 1.005 else sl
+            reason = "TP" if current_price <= tp * 1.005 else "SL"
+
+        pnl = _calc_pnl(pos, close_price)
+        print(
+            f"[executor] exchange closed {direction} order={pos['order_id']}"
+            f" reason={reason} close≈{close_price:.1f} pnl={pnl:.2f}"
+        )
+        append_trade({
+            "opened_at": pos["opened_at"],
+            "closed_at": datetime.now(UTC).isoformat(),
+            "direction": direction,
+            "regime": pos["regime"],
+            "leverage": pos["leverage"],
+            "entry_price": pos["entry_price"],
+            "close_price": close_price,
+            "size_usdt": pos["size_usdt"],
+            "sl_price": sl,
+            "tp_price": tp,
+            "realized_pnl_usdt": round(pnl, 4),
+            "close_reason": reason,
+            "atr_at_entry": pos["atr_at_entry"],
+        })
+        daily["daily_pnl_usdt"] = round(daily.get("daily_pnl_usdt", 0.0) + pnl, 4)
+        daily["trade_count"] = daily.get("trade_count", 0) + 1
+        if pnl >= 0:
+            daily["wins"] = daily.get("wins", 0) + 1
+            daily["consecutive_losses"] = 0
+        else:
+            daily["losses"] = daily.get("losses", 0) + 1
+            daily["consecutive_losses"] = daily.get("consecutive_losses", 0) + 1
+        positions_data["positions"] = [
+            p for p in positions_data["positions"] if p["order_id"] != pos["order_id"]
+        ]
+
+
+def check_tp_hits(client, positions_data: dict, daily: dict, current_price: float) -> None:
+    """TP 폴백: 거래소 TP 등록 실패한 포지션을 봇이 직접 시장가 청산."""
+    for pos in list(positions_data["positions"]):
+        if pos.get("tp_order_id"):
+            continue  # 거래소 TP 등록됨 — 거래소가 처리
         tp = pos["tp_price"]
         direction = pos["direction"]
         hit = current_price >= tp if direction == "long" else current_price <= tp
         if hit:
-            print(f"[executor] TP hit order={pos['order_id']} price={current_price} tp={tp}")
+            print(f"[executor] TP fallback hit order={pos['order_id']} price={current_price} tp={tp}")
             close_position_market(client, pos, "TP", daily, positions_data)
 
 
@@ -481,11 +580,17 @@ def run_executor_once() -> None:
 
         client = get_client()
 
-        # 2-1. 거래소 포지션 동기화 (봇이 모르는 포지션 흡수)
+        # 2-1. 거래소에서 닫힌 포지션 정리 (SL/TP 체결 감지)
+        if positions_data["positions"] and current_price > 0:
+            reconcile_closed_positions(client, positions_data, daily, current_price)
+            save_positions(positions_data)
+            save_daily(daily)
+
+        # 2-2. 거래소 포지션 동기화 (봇이 모르는 포지션 흡수)
         sync_exchange_positions(client, positions_data, atr, regime)
         save_positions(positions_data)
 
-        # 3. TP check (existing positions first)
+        # 3. TP 폴백 체크 (거래소 TP 등록 실패한 포지션만)
         if positions_data["positions"] and current_price > 0:
             check_tp_hits(client, positions_data, daily, current_price)
             save_positions(positions_data)
@@ -570,7 +675,7 @@ def run_executor_once() -> None:
         sl_price = calc_sl_price(direction, entry_price, atr, regime)
         tp_price = calc_tp_price(direction, entry_price, atr, regime)
 
-        # 10. Place exchange SL (3 retry, emergency close on all fail)
+        # 10. Place exchange SL + TP
         position_record = {
             "order_id": order_id,
             "direction": direction,
@@ -579,6 +684,7 @@ def run_executor_once() -> None:
             "sl_price": sl_price,
             "tp_price": tp_price,
             "sl_order_id": "",
+            "tp_order_id": "",
             "regime": regime,
             "leverage": leverage,
             "atr_at_entry": atr,
@@ -588,11 +694,12 @@ def run_executor_once() -> None:
         if not sl_ok:
             print(f"[executor] SL failed + emergency close triggered for {order_id}")
             return
+        place_take_profit(client, position_record)  # non-fatal — fallback via check_tp_hits
 
         # 11. Update positions.json
         positions_data["positions"].append(position_record)
         save_positions(positions_data)
-        print(f"[executor] opened {direction} order={order_id} entry={entry_price} sl={sl_price} tp={tp_price}")
+        print(f"[executor] opened {direction} order={order_id} entry={entry_price} sl={sl_price:.1f} tp={tp_price:.1f}")
 
     except Exception as e:
         print(f"[executor] run_executor_once error: {e}")
