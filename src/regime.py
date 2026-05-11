@@ -207,7 +207,7 @@ def run_regime_once() -> None:
 
         change_str = f" [{regime_transition}]" if regime_changed else ""
         print(
-            f"[regime] regime={regime} risk={sym.get('risk','?')} trend={sym.get('trend_range','?')}{change_str}"
+            f"[regime] regime={regime} risk={symbol_data.get('risk','?')} trend={symbol_data.get('trend_range','?')}{change_str}"
         )
 
     except Exception as e:
