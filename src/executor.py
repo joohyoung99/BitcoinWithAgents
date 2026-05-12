@@ -9,6 +9,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from src.client import get_client
+from src.ai_brain import ai_decide_entry, ai_manage_positions, summarize_trade_history
+from src import risk_engine
 
 STATE_PATH = Path("data/state.json")
 POSITIONS_PATH = Path("data/positions.json")
@@ -80,16 +82,17 @@ def append_trade(row: dict) -> None:
 _SL_MULT = {"normal": 1.5, "caution": 1.0, "risk_off_trend": 1.0}
 _TP_MULT = {"normal": 3.0, "caution": 2.0, "risk_off_trend": 2.0}
 _LEVERAGE = {
-    ("normal", "long"): 10,
-    ("normal", "short"): 5,
-    ("caution", "long"): 5,
-    ("caution", "short"): 3,
-    ("risk_off_trend", "short"): 3,
+    ("normal", "long"): 5,
+    ("normal", "short"): 3,
+    ("caution", "long"): 3,
+    ("caution", "short"): 2,
+    ("risk_off_trend", "short"): 2,
 }
 
-MAX_POSITIONS = 2
+MAX_POSITIONS = 3
 DAILY_LOSS_LIMIT = -1500.0
 MAX_CONSECUTIVE_LOSSES = 3
+# ENTRY_COOLDOWN_MIN removed per user request
 
 
 def calc_trade_size(balance: float) -> float:
@@ -101,11 +104,15 @@ def check_risk(positions: list, daily: dict, regime: str) -> tuple[bool, str]:
         return False, "halt"
     if len(positions) >= MAX_POSITIONS:
         return False, "max_positions"
-    if daily.get("daily_pnl_usdt", 0.0) <= DAILY_LOSS_LIMIT:
-        return False, "daily_loss"
-    if daily.get("consecutive_losses", 0) >= MAX_CONSECUTIVE_LOSSES:
-        return False, "consecutive"
+    # daily loss -5% check (delegated to risk_engine)
+    ok, reason = risk_engine.check_daily_loss_pct(daily)
+    if not ok:
+        return False, reason
+    # consecutive loss 4x → 2h cooldown (delegated to risk_engine)
     return True, ""
+
+
+
 
 
 def get_leverage(regime: str, direction: str) -> int:
@@ -136,7 +143,7 @@ def _bitget_post(client, endpoint: str, body: dict) -> dict | None:
         resp = rh.session.post(f"{rh.base_url}{endpoint}", headers=headers, data=body_str)
         return resp.json()
     except Exception as e:
-        print(f"[executor] POST {endpoint} failed: {e}")
+        print(f"[executor] POST {endpoint} 실패: {e}")
         return None
 
 
@@ -149,7 +156,7 @@ def _bitget_get(client, endpoint: str, params: dict) -> dict | None:
         resp = rh.session.get(f"{rh.base_url}{endpoint}", headers=headers, params=params)
         return resp.json()
     except Exception as e:
-        print(f"[executor] GET {endpoint} failed: {e}")
+        print(f"[executor] GET {endpoint} 실패: {e}")
         return None
 
 
@@ -164,7 +171,7 @@ def sync_exchange_positions(client, positions_data: dict, atr: float, regime: st
         "marginCoin": MARGIN_COIN,
     })
     if not resp or resp.get("code") != "00000":
-        print(f"[executor] sync_exchange_positions failed: {resp}")
+        print(f"[executor] 거래소 포지션 동기화 실패: {resp}")
         return
 
     known_ids = {p.get("order_id", "") for p in positions_data["positions"]}
@@ -213,7 +220,7 @@ def sync_exchange_positions(client, positions_data: dict, atr: float, regime: st
 
         positions_data["positions"].append(record)
         print(
-            f"[executor] synced exchange pos: {hold_side} {size} BTC"
+            f"[executor] 거래소 포지션 흡수 완료: {hold_side} {size} BTC"
             f" entry={entry_price} sl={sl_price:.1f} tp={tp_price:.1f} id={synthetic_id}"
         )
 
@@ -225,6 +232,15 @@ def _qty_from_usdt(size_usdt: float, price: float, leverage: int) -> str:
 
 def _set_leverage(client, direction: str, leverage: int) -> None:
     hold_side = "long" if direction == "long" else "short"
+    
+    # Force isolated margin mode first
+    _bitget_post(client, "/api/v2/mix/account/set-margin-mode", {
+        "symbol": SYMBOL,
+        "productType": PRODUCT_TYPE,
+        "marginCoin": MARGIN_COIN,
+        "marginMode": "isolated",
+    })
+
     resp = _bitget_post(client, "/api/v2/mix/account/set-leverage", {
         "symbol": SYMBOL,
         "productType": PRODUCT_TYPE,
@@ -233,9 +249,9 @@ def _set_leverage(client, direction: str, leverage: int) -> None:
         "holdSide": hold_side,
     })
     if resp and resp.get("code") == "00000":
-        print(f"[executor] leverage set: {hold_side} {leverage}x")
+        print(f"[executor] 레버리지 세팅 완료: {hold_side} {leverage}x (격리)")
     else:
-        print(f"[executor] set-leverage failed (non-fatal): {resp}")
+        print(f"[executor] 레버리지 세팅 실패 (진행계속): {resp}")
 
 
 def place_market_entry(
@@ -263,9 +279,9 @@ def place_market_entry(
             resp = _bitget_post(client, "/api/v2/mix/order/place-order", body)
             if resp and resp.get("code") == "00000":
                 return resp.get("data")
-            print(f"[executor] place_order attempt {attempt+1} failed: {resp}")
+            print(f"[executor] 진입 주문 시도 {attempt+1} 실패: {resp}")
         except Exception as e:
-            print(f"[executor] place_order attempt {attempt+1} exception: {e}")
+            print(f"[executor] 진입 주문 시도 {attempt+1} 에러: {e}")
         if attempt < 2:
             time.sleep(1)
     return None
@@ -305,8 +321,11 @@ def close_position_market(client, position: dict, reason: str, daily: dict, posi
         "orderType": "market",
     })
     if not resp or resp.get("code") != "00000":
-        print(f"[executor] close_market failed: {resp}")
+        print(f"[executor] 시장가 청산 실패: {resp}")
         return False
+
+    # 포지션이 청산되었으므로 남은 대기 SL/TP 주문도 모두 취소
+    cancel_all_tpsl_for_side(client, position["direction"])
 
     now = datetime.now(UTC).isoformat()
     close_price = position.get("tp_price" if reason == "TP" else "sl_price", 0.0)
@@ -369,7 +388,7 @@ def cancel_all_tpsl_for_side(client, hold_side: str) -> int:
         if r and r.get("code") == "00000":
             cancelled += 1
     if cancelled:
-        print(f"[executor] cancelled {cancelled} stale tpsl orders for {hold_side}")
+        print(f"[executor] {hold_side} 방향의 기존 대기 TPSL 주문 {cancelled}개 취소 완료")
     return cancelled
 
 
@@ -392,13 +411,13 @@ def place_stop_loss_with_emergency(client, position: dict) -> bool:
             })
             if resp and resp.get("code") == "00000":
                 return True
-            print(f"[executor] SL attempt {attempt+1} failed: {resp}")
+            print(f"[executor] SL 주문 시도 {attempt+1} 실패: {resp}")
         except Exception as e:
-            print(f"[executor] SL attempt {attempt+1} exception: {e}")
+            print(f"[executor] SL 주문 시도 {attempt+1} 에러: {e}")
         if attempt < 2:
             time.sleep(1)
 
-    print("[executor] SL all retries failed — emergency market close")
+    print("[executor] SL 설정 모든 재시도 실패 — 포지션 강제 시장가 청산 진행")
     close_side = "buy" if hold_side == "long" else "sell"
     btc_qty = _qty_from_usdt(position["size_usdt"], position["entry_price"], position["leverage"])
     _bitget_post(client, "/api/v2/mix/order/place-order", {
@@ -434,14 +453,14 @@ def place_take_profit(client, position: dict) -> bool:
             if resp and resp.get("code") == "00000":
                 tp_order_id = (resp.get("data") or {}).get("orderId", "")
                 position["tp_order_id"] = tp_order_id
-                print(f"[executor] TP set: {hold_side} tp={tp_price:.1f} id={tp_order_id}")
+                print(f"[executor] TP 설정 완료: {hold_side} TP={tp_price:.1f} id={tp_order_id}")
                 return True
-            print(f"[executor] TP attempt {attempt+1} failed: {resp}")
+            print(f"[executor] TP 주문 시도 {attempt+1} 실패: {resp}")
         except Exception as e:
-            print(f"[executor] TP attempt {attempt+1} exception: {e}")
+            print(f"[executor] TP 주문 시도 {attempt+1} 에러: {e}")
         if attempt < 2:
             time.sleep(1)
-    print("[executor] TP all retries failed — check_tp_hits will act as fallback")
+    print("[executor] TP 설정 모든 재시도 실패 — 로컬 백업 로직으로 감시")
     return False
 
 
@@ -469,7 +488,7 @@ def _fetch_close_from_history(client, direction: str, opened_at: str) -> tuple[f
             if close_price > 0:
                 return close_price, realized_pnl
     except Exception as e:
-        print(f"[executor] history fetch failed: {e}")
+        print(f"[executor] 포지션 히스토리 조회 실패: {e}")
     return 0.0, 0.0
 
 
@@ -522,8 +541,8 @@ def reconcile_closed_positions(
             pnl = _calc_pnl(pos, close_price)
 
         print(
-            f"[executor] exchange closed {direction} order={pos['order_id']}"
-            f" reason={reason} close={close_price:.1f} pnl={pnl:.2f}"
+            f"[executor] 거래소 포지션 종료 확인: 방향={direction} 주문={pos['order_id']}"
+            f" 사유={reason} 청산가={close_price:.1f} 손익={pnl:.2f}"
         )
         append_trade({
             "opened_at": pos["opened_at"],
@@ -551,6 +570,12 @@ def reconcile_closed_positions(
         positions_data["positions"] = [
             p for p in positions_data["positions"] if p["order_id"] != pos["order_id"]
         ]
+        # SL 이벤트 추적 (post-SL same-direction reentry 차단용)
+        if reason == "SL":
+            positions_data["last_sl_direction"] = direction
+            positions_data["last_sl_at"] = datetime.now(UTC).isoformat()
+        # TP/SL 잔여 주문 정리 — TP 체결 후 남은 SL이 새 포지션 방해 방지
+        cancel_all_tpsl_for_side(client, direction)
 
 
 def check_tp_hits(client, positions_data: dict, daily: dict, current_price: float) -> None:
@@ -562,16 +587,12 @@ def check_tp_hits(client, positions_data: dict, daily: dict, current_price: floa
         direction = pos["direction"]
         hit = current_price >= tp if direction == "long" else current_price <= tp
         if hit:
-            print(f"[executor] TP fallback hit order={pos['order_id']} price={current_price} tp={tp}")
+            print(f"[executor] 로컬 TP 도달 (백업 로직): 현재가={current_price} TP={tp} 주문={pos['order_id']}")
             close_position_market(client, pos, "TP", daily, positions_data)
 
 
-def _tighten_sl(client, pos: dict, atr: float) -> None:
-    """Tighten SL to ATR×0.8. New SL submitted first, then old SL cancelled (safe order)."""
-    mult = 0.8
-    entry = pos["entry_price"]
-    new_sl = entry - atr * mult if pos["direction"] == "long" else entry + atr * mult
-
+def _update_sl_price(client, pos: dict, new_sl: float) -> bool:
+    """Submit a new SL at new_sl. On success, cancel old SL. Returns True on success."""
     btc_qty = _qty_from_usdt(pos["size_usdt"], pos["entry_price"], pos["leverage"])
     for attempt in range(3):
         try:
@@ -586,19 +607,92 @@ def _tighten_sl(client, pos: dict, atr: float) -> None:
                 "triggerType": "mark_price",
             })
             if resp and resp.get("code") == "00000":
-                # New SL confirmed → now cancel old SL
                 if pos.get("sl_order_id"):
                     cancel_order(client, pos["sl_order_id"])
                 new_sl_id = (resp.get("data") or {}).get("orderId", "")
+                old_sl = pos["sl_price"]
                 pos["sl_price"] = new_sl
                 pos["sl_order_id"] = new_sl_id
-                return
-            print(f"[executor] tighten_sl attempt {attempt+1} failed: {resp}")
+                print(f"[executor] SL 업데이트 완료: {pos['direction']} {old_sl:.1f} → {new_sl:.1f}")
+                return True
+            print(f"[executor] SL 업데이트 시도 {attempt+1} 실패: {resp}")
         except Exception as e:
-            print(f"[executor] tighten_sl attempt {attempt+1} exception: {e}")
+            print(f"[executor] SL 업데이트 시도 {attempt+1} 에러: {e}")
         if attempt < 2:
             time.sleep(1)
-    print(f"[executor] tighten_sl failed — keeping old SL order={pos['order_id']}")
+    return False
+
+
+
+
+
+def adjust_positions_dynamic(
+    client, positions_data: dict, daily: dict, current_price: float, atr: float,
+) -> None:
+    """동적 TP/SL 조정: 가격 진행률 기반 트레일링 스탑.
+
+    - 50%+ toward TP: SL을 손익분기점으로 이동
+    - 75%+ toward TP: SL을 미실현 이익의 50% 잠금 위치로 이동
+    - ATR 서지 (1.5배 초과): SL 30% 강화
+    """
+    for pos in list(positions_data["positions"]):
+        entry = pos["entry_price"]
+        tp = pos["tp_price"]
+        sl = pos["sl_price"]
+        direction = pos["direction"]
+        atr_at_entry = pos.get("atr_at_entry", atr)
+
+        # TP까지의 진행률 계산
+        if direction == "long":
+            tp_distance = tp - entry
+            current_distance = current_price - entry
+        else:
+            tp_distance = entry - tp
+            current_distance = entry - current_price
+
+        if tp_distance <= 0:
+            continue
+
+        progress = current_distance / tp_distance
+
+        # 75%+ TP 도달: 미실현 이익 50% 잠금
+        if progress >= 0.75:
+            if direction == "long":
+                new_sl = entry + (current_price - entry) * 0.5
+                if new_sl > sl + 1:
+                    print(f"[executor] 75% TP 진행 — 이익 잠금: SL {sl:.1f} → {new_sl:.1f}")
+                    _update_sl_price(client, pos, new_sl)
+            else:
+                new_sl = entry - (entry - current_price) * 0.5
+                if new_sl < sl - 1:
+                    print(f"[executor] 75% TP 진행 — 이익 잠금: SL {sl:.1f} → {new_sl:.1f}")
+                    _update_sl_price(client, pos, new_sl)
+
+        # 50%+ TP 도달: 손익분기점 SL
+        elif progress >= 0.5:
+            if direction == "long":
+                new_sl = entry + atr_at_entry * 0.1
+                if new_sl > sl + 1:
+                    print(f"[executor] 50% TP 진행 — 손익분기 SL: {sl:.1f} → {new_sl:.1f}")
+                    _update_sl_price(client, pos, new_sl)
+            else:
+                new_sl = entry - atr_at_entry * 0.1
+                if new_sl < sl - 1:
+                    print(f"[executor] 50% TP 진행 — 손익분기 SL: {sl:.1f} → {new_sl:.1f}")
+                    _update_sl_price(client, pos, new_sl)
+
+        # ATR 서지 감지: 현재 ATR > 진입 ATR × 1.5 → SL 30% 강화
+        if atr_at_entry > 0 and atr > atr_at_entry * 1.5:
+            if direction == "long":
+                tighter = entry - (entry - sl) * 0.7
+                if tighter > sl + 1:
+                    print(f"[executor] ATR 서지 ({atr:.1f} vs {atr_at_entry:.1f}) — SL 강화")
+                    _update_sl_price(client, pos, tighter)
+            else:
+                tighter = entry + (sl - entry) * 0.7
+                if tighter < sl - 1:
+                    print(f"[executor] ATR 서지 ({atr:.1f} vs {atr_at_entry:.1f}) — SL 강화")
+                    _update_sl_price(client, pos, tighter)
 
 
 def handle_regime_change(
@@ -614,7 +708,7 @@ def handle_regime_change(
     transition = f"{prev_regime.upper()}_TO_{new_regime.upper()}"
 
     if positions_data.get("last_transition") == transition:
-        print(f"[executor] regime change {transition} already handled — skip")
+        print(f"[executor] 체제 변경 {transition} 이미 처리됨 — 스킵")
         return
 
     halt_transitions = {
@@ -627,31 +721,27 @@ def handle_regime_change(
         for pos in list(positions_data["positions"]):
             pnl = _calc_pnl(pos, current_price)
             if pnl > 0:
-                print(f"[executor] {transition}: closing profitable pos {pos['order_id']}")
+                print(f"[executor] {transition}: 수익 중인 포지션 청산 주문={pos['order_id']}")
                 close_position_market(client, pos, "REGIME_CHANGE", daily, positions_data)
-            else:
-                print(f"[executor] {transition}: tightening SL pos {pos['order_id']}")
-                _tighten_sl(client, pos, atr)
+            # 손실 중인 포지션은 트레일링 로직과 AI에게 위임
 
-    elif transition in tighten_transitions:
-        for pos in positions_data["positions"]:
-            _tighten_sl(client, pos, atr)
+    # CAUTION 전환 시에는 기존 타이트닝 로직 제거 (트레일링 로직 위임)
 
     positions_data["last_transition"] = transition
     save_positions(positions_data)
-    print(f"[executor] regime change handled: {transition}")
+    print(f"[executor] 체제 변경 처리 완료: {transition}")
 
 
 def run_executor_once() -> None:
     try:
         # 1. Read state.json
         if not STATE_PATH.exists():
-            print("[executor] state.json missing — skip")
+            print("[executor] state.json 없음 — 스킵")
             return
         state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         sym = state.get("BTCUSDT", {})
         if not sym:
-            print("[executor] no BTCUSDT in state.json — skip")
+            print("[executor] state.json에 BTCUSDT 데이터 없음 — 스킵")
             return
 
         regime = sym.get("regime", "halt")
@@ -684,6 +774,31 @@ def run_executor_once() -> None:
             save_positions(positions_data)
             save_daily(daily)
 
+        # 3-1. 동적 TP/SL 트레일링 스탑 (룰 기반)
+        if positions_data["positions"] and current_price > 0:
+            adjust_positions_dynamic(client, positions_data, daily, current_price, atr)
+            save_positions(positions_data)
+
+        # 3-2. AI 포지션 관리 (동적 TP/SL 조정 + 청산 판단)
+        multi_tf = state.get("multi_tf", {})
+        trade_history = summarize_trade_history()
+        if positions_data["positions"] and current_price > 0:
+            ai_actions = ai_manage_positions(
+                positions_data["positions"], multi_tf, current_price, atr, trade_history,
+            )
+            for action in ai_actions:
+                pos = next(
+                    (p for p in positions_data["positions"] if p["order_id"] == action.get("order_id")),
+                    None,
+                )
+                if not pos:
+                    continue
+                if action.get("action") == "close":
+                    print(f"[executor] AI 포지션 청산 지시: 주문={pos['order_id']} — {action.get('reason', '')}")
+                    close_position_market(client, pos, "AI_CLOSE", daily, positions_data)
+            save_positions(positions_data)
+            save_daily(daily)
+
         # 4. Regime change handling
         if regime_changed and regime_transition:
             handle_regime_change(
@@ -696,40 +811,102 @@ def run_executor_once() -> None:
             save_positions(positions_data)
             save_daily(daily)
 
-        # 5. Risk checks
+        # 5. Risk checks (hard guardrails)
         ok, reason = check_risk(positions_data["positions"], daily, regime)
         if not ok:
-            print(f"[executor] risk check failed: {reason} — skip entry")
+            print(f"[executor] 포지션 리스크 검사 실패: {reason} — 진입 보류")
             return
 
-        # 6. Entry signal check
-        print(
-            f"[executor] regime={regime} signal={entry_signal} close={current_price:.1f}"
-            f" atr={atr:.1f} positions={len(positions_data['positions'])}"
+
+        # 6. AI 최종 진입 판단 (멀티 TF + 거래 이력 + 매크로 종합)
+        risk = sym.get("risk", "risk-off")
+        risk_summary = sym.get("risk_summary", "")
+        trend_range = sym.get("trend_range", "range")
+
+        ai_decision = ai_decide_entry(
+            multi_tf=multi_tf,
+            risk=risk,
+            risk_summary=risk_summary,
+            positions=positions_data["positions"],
+            trade_history=trade_history,
+            rule_signal=entry_signal,
+            regime=regime,
+            trend_range=trend_range,
+            current_price=current_price,
+            atr=atr,
         )
-        if entry_signal == "none":
+
+        action = ai_decision["action"]
+        ai_confidence = ai_decision["confidence"]
+
+        print(
+            f"[executor] AI 판단: {action} (신뢰도={ai_confidence})"
+            f" | 차트신호={entry_signal} 체제={regime}"
+        )
+
+        if action == "hold" or ai_confidence < 70:
+            print(f"[executor] AI 관망 지시 또는 신뢰도 부족({ai_confidence}) — 진입 보류")
             return
 
-        direction = entry_signal  # "long" | "short"
-        if regime == "risk_off_trend" and direction == "long":
-            print("[executor] risk_off_trend: long blocked — skip")
-            return
+        direction = "long" if action == "enter_long" else "short"
 
-        # 7. Position sizing
+        # 6-1. 거래소 실제 포지션 검증 (positions.json만 믿지 않음)
+        try:
+            ex_resp = _bitget_get(client, "/api/v2/mix/position/all-position", {
+                "productType": PRODUCT_TYPE,
+                "marginCoin": MARGIN_COIN,
+            })
+            if ex_resp and ex_resp.get("code") == "00000":
+                ex_positions = [
+                    p for p in ex_resp.get("data", [])
+                    if p.get("symbol") == SYMBOL and float(p.get("total", 0)) > 0
+                ]
+                if len(ex_positions) >= MAX_POSITIONS:
+                    print(f"[executor] 거래소에 이미 {len(ex_positions)}개 포지션 존재 — 전체 한도 도달로 진입 보류")
+                    return
+                direction_count = sum(1 for p in ex_positions if p.get("holdSide") == direction)
+                if direction_count >= 2:
+                    print(f"[executor] 거래소에 이미 {direction_count}개의 {direction} 포지션 존재 — 같은 방향 중복 제한으로 진입 보류")
+                    return
+        except Exception as e:
+            print(f"[executor] 거래소 포지션 확인 에러: {e}")
+
+        # 7. Position sizing (Risk Engine — ATR 기반)
         try:
             balance_data = client.account.get_accounts(PRODUCT_TYPE)
             if balance_data.code != "00000" or not balance_data.data:
-                print("[executor] balance fetch failed — skip")
+                print("[executor] 잔고 조회 실패 — 진입 보류")
                 return
-            balance = float(balance_data.data[0]["available"])
+            acc = balance_data.data[0]
+            equity = float(acc.get("accountEquity", 0) or acc.get("usdtEquity", 0) or acc.get("available", 0))
+            available = float(acc.get("available", 0))
         except Exception as e:
-            print(f"[executor] balance fetch error: {e} — skip")
+            print(f"[executor] 잔고 조회 에러: {e} — 진입 보류")
             return
-        if balance < 2000.0:
-            print(f"[executor] balance {balance:.2f} < 2000 USDT — 관망")
+            
+        if available < 500.0:
+            print(f"[executor] 가용 증거금 부족 ({available:.2f} < 500 USDT) — 관망")
             return
-        size_usdt = calc_trade_size(balance)
-        leverage = get_leverage(regime, direction)
+
+        # ATR average (15m) for volatility-adjusted sizing based on total equity
+        avg_atr = multi_tf.get("15m", {}).get("atr", atr) if multi_tf else atr
+        size_usdt = risk_engine.calc_position_size(equity, atr, avg_atr)
+        leverage = risk_engine.cap_leverage(regime, direction)
+
+        # 7-1. Risk Engine 최종 승인 (trend filter + event filter + exposure cap + post-SL block)
+        ok_risk, risk_reason = risk_engine.run_risk_checks(
+            positions=positions_data["positions"],
+            daily=daily,
+            positions_data=positions_data,
+            direction=direction,
+            new_size=size_usdt,
+            new_leverage=leverage,
+            balance=equity,
+            multi_tf=multi_tf,
+        )
+        if not ok_risk:
+            print(f"[executor] 리스크 엔진 진입 차단: {risk_reason} — 진입 보류")
+            return
 
         # 8. SL/TP 가격 사전 계산 (현재가 기준 — 시장가라 슬리피지 미미)
         sl_price = calc_sl_price(direction, current_price, atr, regime)
@@ -741,10 +918,10 @@ def run_executor_once() -> None:
             client, direction, size_usdt, current_price, leverage,
         )
         if not order_result:
-            print("[executor] entry order failed after retries — skip")
+            print("[executor] 시장가 진입 주문 실패 (재시도 소진) — 진입 보류")
             return
         order_id = str(order_result.get("orderId", ""))
-        print(f"[executor] order placed with preset SL={sl_price:.1f} TP={tp_price:.1f}")
+        print(f"[executor] 진입 주문 접수 완료 (예상 SL={sl_price:.1f} TP={tp_price:.1f})")
 
         # 10. Poll order fill via REST (9s, every 3s — market fills fast)
         fill_data = None
@@ -760,14 +937,14 @@ def run_executor_once() -> None:
                     fill_data = detail.get("data", {})
                     break
                 elif status in ("cancelled", "cancel"):
-                    print(f"[executor] order {order_id} cancelled externally — skip")
+                    print(f"[executor] 주문 {order_id} 외부(거래소)에서 취소됨 — 진입 보류")
                     return
             except Exception as e:
-                print(f"[executor] order detail poll error: {e}")
+                print(f"[executor] 주문 체결 상태 확인 에러: {e}")
                 continue
 
         if fill_data is None:
-            print(f"[executor] order {order_id} not filled in 9s — skip")
+            print(f"[executor] 주문 {order_id} 9초 내 전량 체결 안됨 — 로컬 저장 보류 (거래소 확인 필요)")
             return
 
         entry_price = float(fill_data.get("priceAvg", current_price))
@@ -796,11 +973,12 @@ def run_executor_once() -> None:
 
         # 12. Update positions.json
         positions_data["positions"].append(position_record)
+        positions_data["last_entry_at"] = datetime.now(UTC).isoformat()
         save_positions(positions_data)
-        print(f"[executor] opened {direction} order={order_id} entry={entry_price:.1f} sl={sl_price:.1f} tp={tp_price:.1f}")
+        print(f"[executor] {direction} 진입 완료: 주문={order_id} 진입가={entry_price:.1f} SL={sl_price:.1f} TP={tp_price:.1f}")
 
     except Exception as e:
-        print(f"[executor] run_executor_once error: {e}")
+        print(f"[executor] 실행 에러: {e}")
     finally:
         _log_portfolio(client if "client" in dir() else None)
 
@@ -818,7 +996,7 @@ def _log_portfolio(client) -> None:
         if balance_data.code != "00000" or not balance_data.data:
             return
         acc = balance_data.data[0]
-        equity = float(acc.get("equity", 0) or acc.get("available", 0))
+        equity = float(acc.get("accountEquity", 0) or acc.get("usdtEquity", 0) or acc.get("available", 0))
 
         pos_resp = _bitget_get(client, "/api/v2/mix/position/all-position", {
             "productType": PRODUCT_TYPE,
@@ -832,8 +1010,8 @@ def _log_portfolio(client) -> None:
 
         ret_pct = (equity - INITIAL_BALANCE) / INITIAL_BALANCE * 100
         print(
-            f"[portfolio] equity={equity:.2f} USDT  unrealized={unrealized:+.2f}"
-            f"  return={ret_pct:+.2f}%  (initial={INITIAL_BALANCE:.0f})"
+            f"[portfolio] 총 자산={equity:.2f} USDT | 미실현손익={unrealized:+.2f}"
+            f" | 누적수익률={ret_pct:+.2f}% (원금={INITIAL_BALANCE:.0f})"
         )
 
         portfolio = {
@@ -847,4 +1025,4 @@ def _log_portfolio(client) -> None:
         tmp.write_text(json.dumps(portfolio, indent=2), encoding="utf-8")
         os.replace(str(tmp), str(PORTFOLIO_PATH))
     except Exception as e:
-        print(f"[portfolio] log failed: {e}")
+        print(f"[portfolio] 로깅 실패: {e}")

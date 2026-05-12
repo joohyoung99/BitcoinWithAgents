@@ -44,10 +44,11 @@ def test_load_save_daily_resets_on_new_date(tmp_path, monkeypatch):
 
 def test_calc_trade_size():
     from src.executor import calc_trade_size
+    # calc_trade_size is a fallback — always returns 2000.0
+    # Primary sizing is AI-based (balance × ai_size_pct) in run_executor_once
     assert calc_trade_size(20000.0) == 2000.0
-    assert calc_trade_size(5000.0) == 500.0
-    assert calc_trade_size(1000.0) == pytest.approx(100.0)
-    assert calc_trade_size(100.0) == pytest.approx(10.0)
+    assert calc_trade_size(5000.0) == 2000.0
+    assert calc_trade_size(1000.0) == 2000.0
 
 
 def test_check_risk_halt_regime():
@@ -59,7 +60,7 @@ def test_check_risk_halt_regime():
 
 def test_check_risk_max_positions():
     from src.executor import check_risk
-    positions = [{"order_id": "1"}, {"order_id": "2"}]
+    positions = [{"order_id": "1"}, {"order_id": "2"}, {"order_id": "3"}]
     ok, reason = check_risk(positions, {"daily_pnl_usdt": 0.0, "consecutive_losses": 0}, "normal")
     assert ok is False
     assert reason == "max_positions"
@@ -67,16 +68,18 @@ def test_check_risk_max_positions():
 
 def test_check_risk_daily_loss():
     from src.executor import check_risk
+    # -5% of INITIAL_BALANCE (19293) = -964.65 → -1500 triggers
     ok, reason = check_risk([], {"daily_pnl_usdt": -1500.0, "consecutive_losses": 0}, "normal")
     assert ok is False
-    assert reason == "daily_loss"
+    assert "daily_loss" in reason
 
 
 def test_check_risk_consecutive_losses():
     from src.executor import check_risk
+    # consecutive losses check is now delegated to risk_engine (separate stage)
+    # check_risk itself no longer blocks on consecutive_losses alone
     ok, reason = check_risk([], {"daily_pnl_usdt": 0.0, "consecutive_losses": 3}, "normal")
-    assert ok is False
-    assert reason == "consecutive"
+    assert ok is True  # check_risk passes; risk_engine handles cooldown later
 
 
 def test_check_risk_passes():
@@ -101,11 +104,11 @@ def test_calc_sl_tp_normal_short():
 
 def test_get_leverage():
     from src.executor import get_leverage
-    assert get_leverage("normal", "long") == 10
-    assert get_leverage("normal", "short") == 5
-    assert get_leverage("caution", "long") == 5
-    assert get_leverage("caution", "short") == 3
-    assert get_leverage("risk_off_trend", "short") == 3
+    assert get_leverage("normal", "long") == 5
+    assert get_leverage("normal", "short") == 3
+    assert get_leverage("caution", "long") == 3
+    assert get_leverage("caution", "short") == 2
+    assert get_leverage("risk_off_trend", "short") == 2
 
 
 def test_place_entry_retry_succeeds_on_third():
@@ -116,15 +119,17 @@ def test_place_entry_retry_succeeds_on_third():
     with patch("src.executor._bitget_post") as mock_post, \
          patch("src.executor.time.sleep"):
         mock_post.side_effect = [
-            {"code": "50001", "msg": "error"},
-            {"code": "50001", "msg": "error"},
-            {"code": "00000", "data": {"orderId": "abc123", "size": "0.02"}},
+            {"code": "00000"},  # set-margin-mode
+            {"code": "00000"},  # set-leverage
+            {"code": "50001", "msg": "error"},  # place-order try 1
+            {"code": "50001", "msg": "error"},  # place-order try 2
+            {"code": "00000", "data": {"orderId": "abc123", "size": "0.02"}},  # place-order try 3
         ]
         result = place_market_entry(mock_client, "long", 1000.0, 50000.0, 5)
 
     assert result is not None
     assert result["orderId"] == "abc123"
-    assert mock_post.call_count == 3
+    assert mock_post.call_count == 5
 
 
 def test_place_entry_all_retries_fail():
@@ -138,8 +143,8 @@ def test_place_entry_all_retries_fail():
         result = place_market_entry(mock_client, "long", 1000.0, 50000.0, 5)
 
     assert result is None
-    # 1 set-leverage call + 3 place-order retries
-    assert mock_post.call_count == 4
+    # 1 set-margin-mode + 1 set-leverage + 3 place-order retries
+    assert mock_post.call_count == 5
 
 
 def test_sl_failure_triggers_emergency_close():

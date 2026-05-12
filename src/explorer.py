@@ -408,14 +408,14 @@ def main() -> None:
         scheduler.add_job(
             _job_chain,
             "interval",
-            minutes=15,
-            start_date=now + timedelta(minutes=5),
+            minutes=5,
+            start_date=now + timedelta(minutes=1),
             id="chart_regime_executor",
             misfire_grace_time=60,
         )
         # spawns a new daemon thread each iteration; orphaned threads (≤ MAX_RESTARTS) die with the process
-        watchdog.start(scheduler, stale_minutes=20)
-        print("[explorer] scheduler started — explorer 1h, chart+regime+executor 15min (Ctrl+C to stop)")
+        watchdog.start(scheduler, stale_minutes=12)
+        print("[explorer] scheduler started — explorer 1h, chart+regime+executor 5min (Ctrl+C to stop)")
 
         try:
             scheduler.start()

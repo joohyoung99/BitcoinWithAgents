@@ -4,6 +4,8 @@ import csv
 import json
 from pathlib import Path
 
+import requests as http_requests
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,6 +80,30 @@ def get_portfolio():
         return json.loads((DATA / "portfolio.json").read_text(encoding="utf-8"))
     except Exception:
         return {"equity": None, "unrealized": 0.0, "return_pct": None, "initial": 19950.0}
+
+
+@app.get("/api/ticker")
+def get_ticker():
+    """Fetch live BTC price from Bitget public API."""
+    try:
+        resp = http_requests.get(
+            "https://api.bitget.com/api/v2/mix/market/ticker",
+            params={"symbol": "BTCUSDT", "productType": "USDT-FUTURES"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        if data:
+            item = data[0] if isinstance(data, list) else data
+            return {
+                "price": float(item.get("lastPr", 0)),
+                "high24h": float(item.get("high24h", 0)),
+                "low24h": float(item.get("low24h", 0)),
+                "change24h": float(item.get("change24h", 0)),
+            }
+    except Exception:
+        pass
+    return {"price": None}
 
 
 @app.get("/api/logs")

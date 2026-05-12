@@ -122,6 +122,7 @@
   <h1>🤖 BTC Agent Monitor</h1>
   <span id="regime-badge" class="badge badge-unknown">UNKNOWN</span>
   <span id="btc-price">$—</span>
+  <span id="btc-change" style="font-size:13px;font-weight:600;margin-left:4px"></span>
   <span id="last-updated">업데이트 중...</span>
 </header>
 
@@ -338,7 +339,7 @@ function applyState(s) {
   const badge = document.getElementById('regime-badge');
   badge.textContent = REGIME_LABELS[s.regime] || s.regime.toUpperCase();
   badge.className = 'badge badge-' + s.regime;
-  document.getElementById('btc-price').textContent = s.close ? '$' + Number(s.close).toLocaleString() : '$—';
+  document.getElementById('btc-price').textContent = '$—'; // price now from /api/ticker
   if (s.confidence != null) {
     const el = document.getElementById('kpi-confidence');
     el.textContent = s.confidence + '%';
@@ -455,6 +456,24 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 10000);
+
+// --- Live ticker (Bitget API, 3s refresh) ---
+async function refreshTicker() {
+  try {
+    const t = await fetchJSON('/api/ticker');
+    if (t.price) {
+      document.getElementById('btc-price').textContent = '$' + Number(t.price).toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:1});
+      const chgEl = document.getElementById('btc-change');
+      if (t.change24h != null) {
+        const pct = (t.change24h * 100);
+        chgEl.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+        chgEl.style.color = pct >= 0 ? 'var(--green)' : 'var(--red)';
+      }
+    }
+  } catch {}
+}
+refreshTicker();
+setInterval(refreshTicker, 3000);
 </script>
 </body>
 </html>

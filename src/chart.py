@@ -16,13 +16,13 @@ BITGET_BASE = "https://api.bitget.com"
 STATE_PATH = Path("data/state.json")
 REPORT_PATH = Path("data/explorer_report.json")
 
-STALE_CHART_MIN = 30
+STALE_CHART_MIN = 10
 STALE_EXPLORER_MIN = 120
 
 _consecutive_failures: int = 0
 
 
-def fetch_candles(interval: str = "15m", limit: int = 500) -> pd.DataFrame:
+def fetch_candles(interval: str = "5m", limit: int = 500) -> pd.DataFrame:
     resp = requests.get(
         f"{BITGET_BASE}/api/v2/mix/market/candles",
         params={
@@ -69,6 +69,35 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ema50_slope"] = (ema50.iloc[-1] - ema50.iloc[-4]) / ema50.iloc[-4]
 
     return df
+
+
+def fetch_multi_timeframe() -> dict:
+    """Fetch candles + indicators for 15m/1h/4h/1d timeframes."""
+    result = {}
+    timeframes = {"15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
+    for tf_name, interval in timeframes.items():
+        try:
+            df = fetch_candles(interval=interval, limit=300)
+            df = calc_indicators(df)
+            row = df.iloc[-1]
+            result[tf_name] = {
+                "close": round(float(row["close"]), 2),
+                "ema20": round(float(row["EMA_20"]), 2),
+                "ema50": round(float(row["EMA_50"]), 2),
+                "ema200": round(float(row["EMA_200"]), 2),
+                "adx": round(float(row["ADX_14"]), 2),
+                "rsi": round(float(row["RSI_14"]), 2),
+                "atr": round(float(row["ATRr_14"]), 2),
+                "macd_hist": round(float(row.get("MACDh_12_26_9", 0)), 4),
+                "bbu": round(float(row["BBU_20_2.0_2.0"]), 2),
+                "bbl": round(float(row["BBL_20_2.0_2.0"]), 2),
+                "ema_aligned": bool(row["EMA_20"] > row["EMA_50"] > row["EMA_200"]),
+                "trend": "up" if float(row["EMA_20"]) > float(row["EMA_50"]) else "down",
+            }
+        except Exception as e:
+            print(f"[chart] {tf_name} fetch failed: {e}")
+            result[tf_name] = None
+    return result
 
 
 def determine_trend_range(df: pd.DataFrame, prev_trend_range: str) -> str:
@@ -131,9 +160,9 @@ def determine_entry(df: pd.DataFrame, trend_range: str, risk: str) -> str:
     if close <= bbl * 1.010:
         return "long"
     # RSI extreme as additional range signal
-    if rsi >= 70:
+    if rsi >= 75:
         return "short"
-    if rsi <= 30:
+    if rsi <= 25:
         return "long"
     return "none"
 
@@ -253,11 +282,11 @@ def llm_generate_signal(
 
         return signal, confidence, comment
     except Exception as e:
-        print(f"[chart] LLM signal generation failed: {e}")
+        print(f"[chart] AI 독립 차트 분석 실패: {e}")
         return "none", 0, "LLM unavailable"
 
 
-def update_state(signal: ChartSignal) -> None:
+def update_state(signal: ChartSignal, multi_tf: dict | None = None) -> None:
     # Load existing state (preserve other symbols)
     state: dict = {}
     if STATE_PATH.exists():
@@ -298,6 +327,8 @@ def update_state(signal: ChartSignal) -> None:
         "confidence": signal.confidence,
         "signal_summary": signal.signal_summary,
     }
+    if multi_tf:
+        state["multi_tf"] = multi_tf
 
     STATE_PATH.parent.mkdir(exist_ok=True)
     tmp_path = STATE_PATH.with_suffix(".tmp")
@@ -352,7 +383,7 @@ def run_chart_once() -> None:
             if llm_signal != "none" and llm_conf >= 75:
                 entry_signal = llm_signal
                 confidence, comment = llm_conf, f"[LLM override] {llm_comment}"
-                print(f"[chart] LLM override: signal={llm_signal} conf={llm_conf}")
+                print(f"[chart] AI 독립 차트 신호 발동: 신호={llm_signal} 신뢰도={llm_conf}")
             else:
                 confidence, comment = 100, "no signal"
         else:
@@ -386,16 +417,25 @@ def run_chart_once() -> None:
         # Consecutive failure block
         if _consecutive_failures >= 3:
             signal.entry_signal = "none"
-            print(f"[chart] consecutive_failures={_consecutive_failures} — entry_signal forced none")
+            print(f"[chart] 연속실패={_consecutive_failures} — 진입 신호 강제 초기화")
 
-        update_state(signal)
+        # Multi-timeframe data collection
+        multi_tf = None
+        try:
+            multi_tf = fetch_multi_timeframe()
+            aligned_count = sum(1 for v in multi_tf.values() if v and v.get("ema_aligned"))
+            print(f"[chart] 멀티-TF 수집 완료: 정상={len([v for v in multi_tf.values() if v])}/4, 정배열={aligned_count}/4")
+        except Exception as e:
+            print(f"[chart] 멀티-TF 수집 실패: {e}")
+
+        update_state(signal, multi_tf=multi_tf)
         _consecutive_failures = 0
         print(
-            f"[chart] trend={trend_range} signal={signal.entry_signal} conf={confidence}"
-            f" | close={signal.close:.1f} adx={signal.adx:.1f} rsi={signal.rsi:.1f}"
-            f" atr={signal.atr:.1f} ema_aligned={signal.ema_aligned}"
+            f"[chart] 추세={trend_range} 신호={signal.entry_signal} 신뢰도={confidence}"
+            f" | 가격={signal.close:.1f} ADX={signal.adx:.1f} RSI={signal.rsi:.1f}"
+            f" ATR={signal.atr:.1f} EMA정배열={signal.ema_aligned}"
         )
 
     except Exception as e:
         _consecutive_failures += 1
-        print(f"[chart] run_chart_once error (consecutive={_consecutive_failures}): {e}")
+        print(f"[chart] 실행 에러 (연속실패={_consecutive_failures}): {e}")

@@ -9,7 +9,7 @@ from src.gemini import get_model
 from src.models import RegimeState
 
 STATE_PATH = Path("data/state.json")
-STALE_REGIME_MIN = 30
+STALE_REGIME_MIN = 10
 
 _VALID_REGIMES = {"normal", "caution", "risk_off_trend", "halt"}
 
@@ -97,17 +97,17 @@ def review_regime_with_gemini(
 
             if gemini_agg > rule_agg:
                 # Gemini suggests more aggressive regime — adopt it
-                print(f"[regime] Gemini override (more aggressive): rule={regime} → gemini={gemini_regime} — {comment}")
+                print(f"[regime] AI가 더 공격적인 체제로 변경: 기존={regime} → AI={gemini_regime} — {comment}")
                 return gemini_regime
             else:
                 # Gemini suggests more conservative — keep rule-based
-                print(f"[regime] Gemini advisory (more conservative, ignored): rule={regime} gemini={gemini_regime} — {comment}")
+                print(f"[regime] AI가 보수적 체제 제안 (룰 우선으로 무시): 기존={regime} AI={gemini_regime} — {comment}")
                 return regime
 
-        print(f"[regime] Gemini advisory agrees: {gemini_regime}")
+        print(f"[regime] AI 판단 일치: {gemini_regime}")
         return regime
     except Exception as e:
-        print(f"[regime] Gemini review failed: {e} — using rule-based result")
+        print(f"[regime] AI 리뷰 실패: {e} — 기존 룰 기반 결과 사용")
         return regime
 
 
@@ -158,7 +158,7 @@ def run_regime_once() -> None:
                 regime_updated_at=datetime.now(UTC).isoformat(),
             )
             update_regime_state(rs)
-            print("[regime] state.json missing — halt")
+            print("[regime] state.json 없음 — 안전모드(halt) 전환")
             return
 
         updated_at_str = symbol_data.get("updated_at", "")
@@ -176,7 +176,7 @@ def run_regime_once() -> None:
                         regime_updated_at=datetime.now(UTC).isoformat(),
                     )
                     update_regime_state(rs)
-                    print("[regime] state.json stale — halt")
+                    print("[regime] state.json 데이터 오래됨 — 안전모드(halt) 전환")
                     return
             except Exception:
                 pass
@@ -206,9 +206,7 @@ def run_regime_once() -> None:
         update_regime_state(rs)
 
         change_str = f" [{regime_transition}]" if regime_changed else ""
-        print(
-            f"[regime] regime={regime} risk={symbol_data.get('risk','?')} trend={symbol_data.get('trend_range','?')}{change_str}"
-        )
+        print(f"[regime] 현재={regime} 위험도={symbol_data.get('risk','?')} 추세={symbol_data.get('trend_range','?')}{change_str}")
 
     except Exception as e:
-        print(f"[regime] run_regime_once error: {e}")
+        print(f"[regime] 실행 에러: {e}")
