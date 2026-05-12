@@ -373,33 +373,6 @@ def cancel_all_tpsl_for_side(client, hold_side: str) -> int:
     return cancelled
 
 
-def ensure_tpsl_orders(client, positions_data: dict) -> None:
-    """포지션별로 거래소 tpsl 주문이 없으면 재등록. 재시작 후 SL/TP 유실 방지."""
-    if not positions_data["positions"]:
-        return
-    resp = _bitget_get(client, "/api/v2/mix/order/tpsl-pending", {
-        "symbol": SYMBOL,
-        "productType": PRODUCT_TYPE,
-    })
-    if not resp or resp.get("code") != "00000":
-        return
-    raw = resp.get("data", [])
-    items = raw if isinstance(raw, list) else (raw.get("entrustedList") or raw.get("list") or [])
-
-    active: dict[tuple[str, str], bool] = {}  # (holdSide, planType) → True
-    for o in items:
-        active[(o.get("holdSide", ""), o.get("planType", ""))] = True
-
-    for pos in positions_data["positions"]:
-        side = pos["direction"]
-        if not active.get((side, "loss_plan")):
-            print(f"[executor] SL missing for {side} pos={pos['order_id']} — re-placing")
-            place_stop_loss_with_emergency(client, pos)
-        if not active.get((side, "profit_plan")):
-            print(f"[executor] TP missing for {side} pos={pos['order_id']} — re-placing")
-            place_take_profit(client, pos)
-
-
 def place_stop_loss_with_emergency(client, position: dict) -> bool:
     """Submit exchange-side SL. On 3 failures → emergency market close."""
     hold_side = position["direction"]
@@ -704,9 +677,6 @@ def run_executor_once() -> None:
         # 2-2. 거래소 포지션 동기화 (봇이 모르는 포지션 흡수)
         sync_exchange_positions(client, positions_data, atr, regime)
         save_positions(positions_data)
-
-        # 2-3. 기존 포지션 SL/TP 검증 — 없으면 재등록
-        ensure_tpsl_orders(client, positions_data)
 
         # 3. TP 폴백 체크 (거래소 TP 등록 실패한 포지션만)
         if positions_data["positions"] and current_price > 0:
