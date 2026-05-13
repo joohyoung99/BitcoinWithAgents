@@ -237,7 +237,8 @@ def ai_decide_entry(
 # ---------------------------------------------------------------------------
 
 _POSITION_MGMT_PROMPT = """\
-You are aggressive managing open BTC/USDT futures positions. Decide on each position.
+You are managing open BTC/USDT futures positions. Each position already has SL/TP set.
+Your job is to decide whether to KEEP or CLOSE each position early.
 
 ## Open Positions
 {positions}
@@ -252,14 +253,16 @@ You are aggressive managing open BTC/USDT futures positions. Decide on each posi
 Win rate: {win_rate}% | Recent: {recent_pattern}
 
 ## Per-Position Decision Options
-1. **hold** — Keep current TP/SL, no changes
-2. **close** — Close immediately at market (specify reason)
+1. **hold** — Keep current TP/SL, let the trade play out (DEFAULT)
+2. **close** — Close immediately at market (ONLY in extreme cases)
 
 ## Guidelines
-- Higher timeframes (4h, 1d) turning against position → close
-- Profitable + momentum fading → close to lock profits
-- All timeframes still support direction → hold
-- Holding a losing position hoping for reversal is the #1 mistake — be decisive
+- **DEFAULT is hold**. SL/TP are already protecting the position.
+- Only close if there is a CLEAR, STRONG reversal signal across MULTIPLE timeframes.
+- Minor pullbacks or temporary momentum pauses are NOT reasons to close.
+- A single timeframe turning against is NOT enough — need 3+ timeframes confirming reversal.
+- Let winners run. Closing too early is a bigger mistake than holding through noise.
+- Only close a losing position if the FUNDAMENTAL thesis has completely broken down.
 
 ## Output (strict JSON only, no markdown)
 {{"positions": [{{"order_id": "<id>", "action": "hold" | "close", "reason": "<one sentence in Korean>"}}]}}
