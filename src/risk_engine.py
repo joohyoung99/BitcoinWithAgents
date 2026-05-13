@@ -168,18 +168,18 @@ def check_event_filter() -> tuple[bool, str]:
     today = now.strftime("%Y-%m-%d")
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # FOMC: block day-of and day-before
-    for fomc in _FOMC_DATES:
-        if today == fomc or tomorrow == fomc:
-            return False, f"FOMC event ({fomc})"
+    # FOMC: disabled — AI 판단에 위임
+    # for fomc in _FOMC_DATES:
+    #     if today == fomc or tomorrow == fomc:
+    #         return False, f"FOMC event ({fomc})"
 
-    # NFP: first Friday
-    if _is_first_friday(now):
-        return False, "NFP (first Friday)"
+    # NFP: disabled — AI 판단에 위임
+    # if _is_first_friday(now):
+    #     return False, "NFP (first Friday)"
 
-    # CPI: 10th-14th window
-    if _is_cpi_window(now):
-        return False, f"CPI window (day {now.day})"
+    # CPI: disabled — 5일 연속 차단이 너무 보수적
+    # if _is_cpi_window(now):
+    #     return False, f"CPI window (day {now.day})"
 
     # Custom events file (optional override)
     events_path = Path("data/events.json")

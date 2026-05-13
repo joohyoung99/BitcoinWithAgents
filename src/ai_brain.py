@@ -131,7 +131,7 @@ def _parse_json_response(text: str) -> dict:
 # ---------------------------------------------------------------------------
 
 _ENTRY_PROMPT = """\
-You are an expert BTC/USDT futures trading AI. Decide DIRECTION and CONFIDENCE only.
+You are an aggressive expert BTC/USDT futures trading AI. Decide DIRECTION and CONFIDENCE only.
 Leverage, position size, and final order approval are handled by the Risk Engine.
 
 ## Multi-Timeframe Technical Analysis
