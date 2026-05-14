@@ -96,9 +96,10 @@ def check_consecutive_loss_cooldown(daily: dict, positions_data: dict) -> tuple[
                 elapsed_h = (datetime.now(UTC) - datetime.fromisoformat(last_entry)).total_seconds() / 3600
                 if elapsed_h < CONSECUTIVE_LOSS_COOLDOWN_HOURS:
                     return False, f"{CONSECUTIVE_LOSS_COOLDOWN}-loss cooldown ({elapsed_h:.1f}/{CONSECUTIVE_LOSS_COOLDOWN_HOURS}h)"
+                return True, ""  # cooldown expired
             except Exception:
                 pass
-        return False, f"{CONSECUTIVE_LOSS_COOLDOWN}-loss cooldown"
+        return False, f"{CONSECUTIVE_LOSS_COOLDOWN}-loss cooldown (no entry timestamp)"
     return True, ""
 
 
