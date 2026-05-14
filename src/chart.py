@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -62,7 +63,8 @@ def calc_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df.ta.atr(length=14, append=True)   # → ATRr_14
     df.ta.obv(append=True)              # → OBV
 
-    df = df.dropna().reset_index(drop=True)
+    _CORE = ["EMA_20", "EMA_50", "ADX_14", "RSI_14", "ATRr_14"]
+    df = df.dropna(subset=_CORE).reset_index(drop=True)
 
     # EMA50 slope: 3-candle rate of change via safe iloc indexing
     ema50 = df["EMA_50"]
@@ -80,18 +82,25 @@ def fetch_multi_timeframe() -> dict:
             df = fetch_candles(interval=interval, limit=300)
             df = calc_indicators(df)
             row = df.iloc[-1]
+            ema200_raw = float(row["EMA_200"]) if "EMA_200" in row.index else float("nan")
+            ema200 = ema200_raw if not math.isnan(ema200_raw) else float(row["EMA_50"])
+            ema_aligned = (
+                bool(row["EMA_20"] > row["EMA_50"] > ema200_raw)
+                if not math.isnan(ema200_raw)
+                else bool(row["EMA_20"] > row["EMA_50"])
+            )
             result[tf_name] = {
                 "close": round(float(row["close"]), 2),
                 "ema20": round(float(row["EMA_20"]), 2),
                 "ema50": round(float(row["EMA_50"]), 2),
-                "ema200": round(float(row["EMA_200"]), 2),
+                "ema200": round(ema200, 2),
                 "adx": round(float(row["ADX_14"]), 2),
                 "rsi": round(float(row["RSI_14"]), 2),
                 "atr": round(float(row["ATRr_14"]), 2),
                 "macd_hist": round(float(row.get("MACDh_12_26_9", 0)), 4),
                 "bbu": round(float(row["BBU_20_2.0_2.0"]), 2),
                 "bbl": round(float(row["BBL_20_2.0_2.0"]), 2),
-                "ema_aligned": bool(row["EMA_20"] > row["EMA_50"] > row["EMA_200"]),
+                "ema_aligned": ema_aligned,
                 "trend": "up" if float(row["EMA_20"]) > float(row["EMA_50"]) else "down",
             }
         except Exception as e:
