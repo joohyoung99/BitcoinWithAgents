@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -118,12 +119,15 @@ def _format_positions(positions: list) -> str:
 
 def _parse_json_response(text: str) -> dict:
     text = text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.rsplit("```", 1)[0]
-    return json.loads(text.strip())
+    # Try fenced code block first (```json ... ``` or ``` ... ```)
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        return json.loads(m.group(1))
+    # Try raw JSON object anywhere in the text
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        return json.loads(m.group(0))
+    return json.loads(text)
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +230,7 @@ def ai_decide_entry(
         if rule_signal in ("long", "short"):
             return {
                 "action": f"enter_{rule_signal}",
-                "confidence": 60,
+                "confidence": 70,
                 "reason": "AI 판단 실패, 룰 기반 폴백",
             }
         return {"action": "hold", "confidence": 0, "reason": "AI 판단 실패"}
